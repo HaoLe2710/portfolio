@@ -1,0 +1,142 @@
+{
+  "common": {
+    "brand": "Hao.dev",
+    "siteName": "Hao.dev",
+    "authorName": "Le Ngoc Hao",
+    "localeName": "English",
+    "defaultDescription": "Portfolio of Le Ngoc Hao, a Java Backend Developer Intern/Fresher focused on Spring Boot, APIs, and scalable backend systems.",
+    "titleTemplate": "%s | Le Ngoc Hao",
+    "foundationReady": "Internationalization foundation is ready."
+  },
+  "navigation": {
+    "home": "Home",
+    "about": "About",
+    "skills": "Skills",
+    "projects": "Projects",
+    "education": "Education",
+    "certificates": "Certificates",
+    "blog": "Blog",
+    "contact": "Contact"
+  },
+  "actions": {
+    "downloadCv": "Download CV",
+    "sendEmail": "Send email",
+    "openGithub": "Open GitHub",
+    "viewProjects": "View projects",
+    "viewDetails": "View details",
+    "readMore": "Read more",
+    "contactMe": "Contact me",
+    "viewSource": "View source",
+    "viewRepository": "View repository",
+    "openProject": "Open project",
+    "backToProjects": "Back to projects",
+    "backToBlog": "Back to blog",
+    "switchLanguage": "Switch language",
+    "toggleTheme": "Toggle theme",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu",
+    "backToHome": "Back to home"
+  },
+  "hero": {
+    "eyebrow": "Hello, I'm",
+    "title": "Le Ngoc Hao",
+    "subtitle": "Java Backend Developer Intern / Fresher",
+    "architectureTitle": "Backend architecture",
+    "architectureApiGateway": "API Gateway",
+    "architectureDatabase": "Database",
+    "architectureCache": "Cache",
+    "architectureCloud": "Cloud",
+    "architectureServices": "Services"
+  },
+  "about": {
+    "title": "About me",
+    "description": "A focused snapshot of my background, education, and backend direction.",
+    "location": "Location",
+    "university": "University",
+    "major": "Major",
+    "gpa": "GPA",
+    "focus": "Focus"
+  },
+  "skills": {
+    "title": "Skills",
+    "description": "Technologies I use across backend systems, deployment, databases, frontend collaboration, and IoT integrations."
+  },
+  "projects": {
+    "title": "Projects",
+    "detailTitle": "Project detail",
+    "featuredTitle": "Featured projects",
+    "featuredDescription": "Selected projects that show backend architecture, API design, deployment, and cross-platform collaboration.",
+    "pageEyebrow": "Portfolio projects",
+    "pageTitle": "Selected backend and full-stack projects",
+    "pageDescription": "Academic and practical projects focused on backend architecture, API design, deployment, IoT integration, and collaboration across web and mobile teams.",
+    "filters": {
+      "all": "All",
+      "backend": "Backend",
+      "iot": "IoT",
+      "cicd": "CI/CD",
+      "cloud": "Cloud"
+    },
+    "roleLabel": "Role",
+    "techStackLabel": "Tech stack",
+    "backToProjects": "Back to projects",
+    "overviewLabel": "Overview",
+    "repositoryLinksLabel": "Repository links",
+    "architectureLabel": "Architecture",
+    "modulesLabel": "Modules",
+    "metricsLabel": "Metrics",
+    "viewProjectLinks": "View project links",
+    "notFoundTitle": "Project not found",
+    "notFoundDescription": "The project you are looking for does not exist or is not available in this locale.",
+    "highlightsLabel": "Highlights",
+    "linksLabel": "Links",
+    "emptyTitle": "No projects found",
+    "emptyDescription": "Try another filter or check back later for more project work.",
+    "role": "Role",
+    "highlights": "Highlights"
+  },
+  "education": {
+    "title": "Education",
+    "description": "Academic background and achievements that support my backend development path.",
+    "achievements": "Achievements"
+  },
+  "certificates": {
+    "title": "Certificates",
+    "description": "Learning, preparation, and practice items. These are not presented as official certificates unless clearly stated.",
+    "learningItem": "Learning item",
+    "officialCertificate": "Official certificate"
+  },
+  "blog": {
+    "title": "Blog",
+    "detailTitle": "Blog post",
+    "pageEyebrow": "Technical notes",
+    "pageTitle": "Backend notes and project lessons",
+    "pageDescription": "Short writing about Java backend architecture, IoT workflows, deployment, and practical lessons from portfolio projects.",
+    "latestTitle": "Latest writing",
+    "latestDescription": "Short technical notes about backend architecture, IoT workflows, deployment, and lessons from projects.",
+    "latestLabel": "Latest notes",
+    "tagsLabel": "Tags",
+    "publishedLabel": "Published",
+    "readingTime": "min read",
+    "readingTimeLabel": "Reading time",
+    "minuteRead": "min read",
+    "emptyTitle": "No notes yet",
+    "emptyDescription": "Technical notes will appear here when new writing is ready.",
+    "postNotFoundTitle": "Blog post not found",
+    "postNotFoundDescription": "The blog post you are looking for does not exist or is not available in this locale."
+  },
+  "contact": {
+    "title": "Contact",
+    "description": "Open to Java Backend Intern/Fresher opportunities and practical backend projects."
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "The page you are looking for does not exist or may have moved."
+  },
+  "footer": {
+    "builtWith": "Built with Next.js and React",
+    "copyright": "© 2026 Le Ngoc Hao. All rights reserved.",
+    "quickLinks": "Quick links",
+    "contact": "Contact",
+    "description": "A clean portfolio for backend projects, technical writing, and career growth in Java backend development."
+  }
+}

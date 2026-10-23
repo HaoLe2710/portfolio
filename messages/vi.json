@@ -1,0 +1,142 @@
+{
+  "common": {
+    "brand": "Hao.dev",
+    "siteName": "Hao.dev",
+    "authorName": "Lê Ngọc Hào",
+    "localeName": "Tiếng Việt",
+    "defaultDescription": "Portfolio của Lê Ngọc Hào, Java Backend Developer Intern/Fresher tập trung vào Spring Boot, API và hệ thống backend có khả năng mở rộng.",
+    "titleTemplate": "%s | Lê Ngọc Hào",
+    "foundationReady": "Nền tảng đa ngôn ngữ đã sẵn sàng."
+  },
+  "navigation": {
+    "home": "Trang chủ",
+    "about": "Giới thiệu",
+    "skills": "Kỹ năng",
+    "projects": "Dự án",
+    "education": "Học vấn",
+    "certificates": "Chứng chỉ",
+    "blog": "Bài viết",
+    "contact": "Liên hệ"
+  },
+  "actions": {
+    "downloadCv": "Tải CV",
+    "sendEmail": "Gửi email",
+    "openGithub": "Mở GitHub",
+    "viewProjects": "Xem dự án",
+    "viewDetails": "Xem chi tiết",
+    "readMore": "Đọc tiếp",
+    "contactMe": "Liên hệ",
+    "viewSource": "Xem mã nguồn",
+    "viewRepository": "Xem repository",
+    "openProject": "Mở dự án",
+    "backToProjects": "Quay lại dự án",
+    "backToBlog": "Quay lại bài viết",
+    "switchLanguage": "Đổi ngôn ngữ",
+    "toggleTheme": "Đổi giao diện",
+    "openMenu": "Mở menu",
+    "closeMenu": "Đóng menu",
+    "backToHome": "Về trang chủ"
+  },
+  "hero": {
+    "eyebrow": "Xin chào, tôi là",
+    "title": "Lê Ngọc Hào",
+    "subtitle": "Java Backend Developer Intern / Fresher",
+    "architectureTitle": "Kiến trúc backend",
+    "architectureApiGateway": "API Gateway",
+    "architectureDatabase": "Cơ sở dữ liệu",
+    "architectureCache": "Cache",
+    "architectureCloud": "Cloud",
+    "architectureServices": "Services"
+  },
+  "about": {
+    "title": "Giới thiệu",
+    "description": "Tóm tắt ngắn gọn về nền tảng học tập, định hướng và mục tiêu backend của tôi.",
+    "location": "Địa điểm",
+    "university": "Trường đại học",
+    "major": "Chuyên ngành",
+    "gpa": "GPA",
+    "focus": "Định hướng"
+  },
+  "skills": {
+    "title": "Kỹ năng",
+    "description": "Các công nghệ tôi sử dụng trong backend, triển khai, cơ sở dữ liệu, phối hợp frontend và tích hợp IoT."
+  },
+  "projects": {
+    "title": "Dự án",
+    "detailTitle": "Chi tiết dự án",
+    "featuredTitle": "Dự án nổi bật",
+    "featuredDescription": "Các dự án thể hiện kiến trúc backend, thiết kế API, triển khai và phối hợp đa nền tảng.",
+    "pageEyebrow": "Portfolio dự án",
+    "pageTitle": "Các dự án backend và full-stack tiêu biểu",
+    "pageDescription": "Các dự án học thuật và thực tế tập trung vào kiến trúc backend, thiết kế API, triển khai, tích hợp IoT và phối hợp với đội web/mobile.",
+    "filters": {
+      "all": "Tất cả",
+      "backend": "Backend",
+      "iot": "IoT",
+      "cicd": "CI/CD",
+      "cloud": "Cloud"
+    },
+    "roleLabel": "Vai trò",
+    "techStackLabel": "Công nghệ",
+    "backToProjects": "Quay lại dự án",
+    "overviewLabel": "Tổng quan",
+    "repositoryLinksLabel": "Liên kết repository",
+    "architectureLabel": "Kiến trúc",
+    "modulesLabel": "Module",
+    "metricsLabel": "Chỉ số",
+    "viewProjectLinks": "Xem liên kết dự án",
+    "notFoundTitle": "Không tìm thấy dự án",
+    "notFoundDescription": "Dự án bạn đang tìm không tồn tại hoặc chưa có ở ngôn ngữ này.",
+    "highlightsLabel": "Điểm nổi bật",
+    "linksLabel": "Liên kết",
+    "emptyTitle": "Không có dự án phù hợp",
+    "emptyDescription": "Hãy thử bộ lọc khác hoặc quay lại sau để xem thêm dự án.",
+    "role": "Vai trò",
+    "highlights": "Điểm nổi bật"
+  },
+  "education": {
+    "title": "Học vấn",
+    "description": "Nền tảng học tập và thành tích hỗ trợ định hướng phát triển backend của tôi.",
+    "achievements": "Thành tích"
+  },
+  "certificates": {
+    "title": "Chứng chỉ",
+    "description": "Các mục học tập, ôn luyện và thực hành. Không trình bày như chứng chỉ chính thức nếu dữ liệu chưa nêu rõ.",
+    "learningItem": "Mục học tập",
+    "officialCertificate": "Chứng chỉ chính thức"
+  },
+  "blog": {
+    "title": "Bài viết",
+    "detailTitle": "Chi tiết bài viết",
+    "pageEyebrow": "Ghi chú kỹ thuật",
+    "pageTitle": "Ghi chú backend và bài học dự án",
+    "pageDescription": "Các bài viết ngắn về kiến trúc Java backend, luồng IoT, triển khai và bài học thực tế từ các dự án portfolio.",
+    "latestTitle": "Bài viết mới",
+    "latestDescription": "Các ghi chú kỹ thuật ngắn về kiến trúc backend, luồng IoT, triển khai và bài học từ dự án.",
+    "latestLabel": "Ghi chú mới",
+    "tagsLabel": "Thẻ",
+    "publishedLabel": "Xuất bản",
+    "readingTime": "phút đọc",
+    "readingTimeLabel": "Thời gian đọc",
+    "minuteRead": "phút đọc",
+    "emptyTitle": "Chưa có bài viết",
+    "emptyDescription": "Các ghi chú kỹ thuật sẽ xuất hiện ở đây khi nội dung mới sẵn sàng.",
+    "postNotFoundTitle": "Không tìm thấy bài viết",
+    "postNotFoundDescription": "Bài viết bạn đang tìm không tồn tại hoặc chưa có ở ngôn ngữ này."
+  },
+  "contact": {
+    "title": "Liên hệ",
+    "description": "Sẵn sàng cho cơ hội Java Backend Intern/Fresher và các dự án backend thực tế."
+  },
+  "notFound": {
+    "title": "Không tìm thấy trang",
+    "description": "Trang bạn đang tìm không tồn tại hoặc đã được di chuyển."
+  },
+  "footer": {
+    "builtWith": "Xây dựng với Next.js và React",
+    "copyright": "© 2026 Lê Ngọc Hào. All rights reserved.",
+    "quickLinks": "Liên kết nhanh",
+    "contact": "Liên hệ",
+    "description": "Portfolio gọn gàng cho dự án backend, bài viết kỹ thuật và định hướng phát triển Java Backend."
+  }
+}
