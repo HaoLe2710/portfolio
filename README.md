@@ -54,7 +54,7 @@ Project và blog detail được sinh trước bằng `generateStaticParams`, l�
 Trong Cloudflare Dashboard:
 
 1. Tạo Pages project và kết nối Git repository.
-2. Đặt **Root directory** là `frontend` nếu repository có thư mục bọc bên ngoài. Nếu repository root chính là nội dung thư mục này, để trống.
+2. Để **Root directory** trống. Git repository `HaoLe2710/portfolio` được khởi tạo trực tiếp tại thư mục `frontend`, nên đây đã là repository root.
 3. Đặt **Build command** là `pnpm run build` và **Build output directory** là `out`.
 4. Trong **Settings → Environment variables**, ghim build toolchain bằng `NODE_VERSION=22` và `PNPM_VERSION=11.9.0`. `NODE_VERSION` khớp `.nvmrc`; `PNPM_VERSION` khớp `packageManager` trong `package.json`.
 5. Thêm các biến ứng dụng cho cả Production và Preview:
