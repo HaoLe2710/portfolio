@@ -10,8 +10,8 @@ if [[ "$branch" == "main" ]]; then
   export NEXT_PUBLIC_ROBOTS_INDEX="true"
 else
   export NEXT_PUBLIC_DATA_SOURCE="api"
-  export NEXT_PUBLIC_API_BASE_URL="https://web-portfolio-api.lengochao123-27102004.workers.dev/api"
-  export NEXT_PUBLIC_SITE_URL="${CF_PAGES_URL:-https://web-porfolio.pages.dev}"
+  export NEXT_PUBLIC_API_BASE_URL="https://web-portfolio-api-staging.lengochao123-27102004.workers.dev/api"
+  export NEXT_PUBLIC_SITE_URL="${CF_PAGES_URL:-http://localhost:8788}"
   export NEXT_PUBLIC_ROBOTS_INDEX="false"
 fi
 

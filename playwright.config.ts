@@ -14,7 +14,7 @@ export default defineConfig({
     viewport: { width: 1280, height: 900 },
   },
   webServer: {
-    command: `wrangler pages dev --ip 127.0.0.1 --port ${port} --show-interactive-dev-session=false`,
+    command: `node scripts/start-local-admin-preview.mjs`,
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

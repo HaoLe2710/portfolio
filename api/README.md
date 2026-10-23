@@ -6,8 +6,9 @@ This package runs the public portfolio API as an independent Cloudflare Worker. 
 
 ```text
 Cloudflare Pages (Next.js output: out/)
-  └─ pnpm run build ── GET requests ──> web-portfolio-api Worker
-                                          └─ D1 binding DB ──> portfolio_db
+  ├─ pnpm run build ── public GET requests ──> web-portfolio-api Worker
+  └─ /api/admin/* Pages Function ── Service Binding ──> web-portfolio-api Worker
+                                                        └─ D1 binding DB ──> portfolio_db
 ```
 
 The repository root `wrangler.toml` remains the Pages configuration. This package uses `api/wrangler.toml`; its Worker name is `web-portfolio-api` and it does not deploy Pages assets.
@@ -28,7 +29,7 @@ The repository root `wrangler.toml` remains the Pages configuration. This packag
 
 All publishable records use `DRAFT` or `PUBLISHED`. Public SQL filters on `PUBLISHED` and orders by `display_order, id`. Translation tables have a unique `(entity_id, locale)` key. Project block metadata is JSON for the nested feature, architecture, module, CI/CD, gallery, metric, and link structures; outer titles and Markdown bodies are locale rows. SQL values from requests use D1 prepared statements.
 
-The Worker implements:
+The public API implements:
 
 - `GET /healthz`
 - `GET /api/public/profile?locale=en`
@@ -93,10 +94,33 @@ pnpm api:deploy
 
 The Worker uses the `workers.dev` hostname assigned by Cloudflare. Its URL must be taken from the actual deploy output; do not put a guessed hostname in Pages configuration.
 
-Pages Git integration uses `bash scripts/cloudflare-pages-build.sh`. On `main`, it builds from the deployed Worker API using the production canonical origin and indexability. On preview branches, it builds from the same API, uses Cloudflare's `CF_PAGES_URL` as the canonical origin, and sets `robots` to noindex.
+Pages Git integration uses `bash scripts/cloudflare-pages-build.sh`. On `main`, it builds from the production Worker API using the production canonical origin and indexability. On preview branches, it builds from the staging Worker API and staging D1 seed, uses Cloudflare's `CF_PAGES_URL` as the canonical origin, and sets `robots` to noindex. A missing `CF_PAGES_URL` falls back to the local Pages preview host, never the production canonical host.
 
 If a production API build fails, restore the previous mock build command and redeploy the last known-good Pages commit. Worker and Pages releases are separate; rolling back the Worker does not alter the static Pages assets.
 
-## Scope boundary
+## CMS admin and safe staging
 
-This phase contains only public read endpoints and the data model required to support a later CMS. It does not implement authentication, admin CRUD, public writes, R2 uploads, D1 writes from visitors, or a Pages Function.
+The CMS is draft-only. A Pages Function at `/api/admin/*` forwards same-origin admin requests through a Service Binding. Authentication is owner/admin only. New passwords use Argon2id v1.3 with a random 16-byte salt, a 32-byte hash, 19,456 KiB memory, two passes, and one lane; the WASM implementation runs inside the Worker. Existing PBKDF2-SHA-256 accounts at 100,000 iterations remain verifiable and are upgraded to Argon2id after a successful login. Sessions are random, stored as hashes, expire after 12 hours, and use HttpOnly/SameSite cookies. Mutations require a same-origin request; login throttling and audit events are enabled. Cloudflare Access is not enabled for this account, so it is not the authentication layer for this setup. Argon2id's configured work factor matches an OWASP-listed minimum profile; validate real Worker CPU/memory behavior before increasing it. Admin draft snapshots and revision history live in separate `admin_*` tables. The CMS never writes published tables and has no publish or deploy hook.
+
+Migrations `0002_admin_cms.sql` and `0003_argon2id_auth.sql` are additive; keep `0001_init_schema.sql` unchanged. Migration `0003` adds a password algorithm discriminator with a PBKDF2 default so existing accounts remain readable. `password_iterations` remains populated to satisfy the original schema constraint and is ignored for Argon2id hashes. Local setup:
+
+```bash
+pnpm db:migrate:local
+pnpm db:seed:local
+pnpm admin:bootstrap:local
+```
+
+For an isolated staging environment, create `portfolio_db_staging`, place only that database UUID in `api/wrangler.staging.toml`, and use these commands:
+
+```bash
+pnpm db:migrate:staging
+pnpm db:seed:staging
+pnpm admin:bootstrap:staging
+pnpm api:deploy:staging
+```
+
+Staging-specific migration, seed, bootstrap, and deploy commands use `wrangler.staging.toml`. Do not use the production configuration for staging operations or run the existing `db:seed:remote` command against any database other than `portfolio_db`. The bootstrap scripts request the owner credentials in a terminal and never put a password in source control. The Pages preview service binding targets `web-portfolio-api-staging`; the Pages production binding targets `web-portfolio-api` only after an explicit production release.
+
+For local browser E2E tests, `scripts/start-local-admin-preview.mjs` starts a locally named API Worker, waits for its unauthenticated 401 response, then starts Pages so the Service Binding is ready. API integration tests cover actual credential verification and D1 session/draft behavior; the browser sign-in happy path uses a controlled response fixture and checks that the frontend does not persist a bearer token.
+
+For an authenticated test against an actual Pages Preview, set `PORTFOLIO_STAGING_PREVIEW_URL`, `PORTFOLIO_STAGING_API_URL`, and `PORTFOLIO_STAGING_CREDENTIALS_FILE` to the Preview URL, staging Worker URL, and ignored local credential file, then run `pnpm test:admin:preview`. The script refuses the production Pages hostname and a non-staging Worker hostname. It checks the Pages Function session path, draft workflows, all eight project block editors, public Draft isolation, concurrency handling, session expiry, CSRF rejection, invalid input, and responsive layout.

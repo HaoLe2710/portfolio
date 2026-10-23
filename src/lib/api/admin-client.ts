@@ -1,94 +1,89 @@
-import { ApiError, toApiError } from "./api-error";
-import {
-  clearAdminAccessToken,
-  getAdminAccessToken,
-} from "./auth-token-store";
-import { requestApi } from "./http-client";
+import { ApiError } from "./api-error";
 import type { ApiQueryParams } from "./public-client";
 
-function getAuthorizationHeader() {
-  const token = getAdminAccessToken();
+type ApiEnvelope<T> = {
+  success: boolean;
+  message?: string;
+  data: T | null;
+  error: { code: string; message: string; details?: Record<string, unknown> } | null;
+  path?: string;
+  timestamp?: string;
+};
 
-  if (!token) {
-    throw new ApiError("Admin access token is missing.", {
-      code: "UNAUTHORIZED",
-      status: 401,
-    });
-  }
-
-  return `Bearer ${token}`;
-}
+type AdminMethod = "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
 
 async function requestAdmin<TResponse>(
-  method: "DELETE" | "GET" | "PATCH" | "POST" | "PUT",
+  method: AdminMethod,
   path: string,
-  options: {
-    body?: unknown;
-    params?: ApiQueryParams;
-  } = {}
+  options: { body?: unknown; params?: ApiQueryParams } = {}
 ): Promise<TResponse> {
+  const url = new URL(`/api/admin${path.startsWith("/") ? path : `/${path}`}`, window.location.origin);
+  for (const [key, value] of Object.entries(options.params ?? {})) {
+    if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+  }
+
+  let response: Response;
   try {
-    return await requestApi<TResponse>({
-      data: options.body,
-      headers: {
-        Authorization: getAuthorizationHeader(),
-      },
+    response = await fetch(url, {
       method,
-      params: options.params,
-      url: path,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json",
+        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
     });
   } catch (error) {
-    const apiError = toApiError(error);
-
-    if (apiError.status === 401 || apiError.code === "UNAUTHORIZED") {
-      clearAdminAccessToken();
-    }
-
-    throw apiError;
+    throw new ApiError("Could not connect to the admin service.", {
+      code: "NETWORK_ERROR",
+      cause: error,
+    });
   }
+
+  let envelope: ApiEnvelope<TResponse> | null = null;
+  try {
+    envelope = await response.json() as ApiEnvelope<TResponse>;
+  } catch {
+    throw new ApiError("The admin service returned an invalid response.", {
+      code: "INVALID_RESPONSE",
+      status: response.status,
+    });
+  }
+
+  if (!response.ok || !envelope.success || envelope.data === null) {
+    throw new ApiError(envelope.error?.message ?? `Admin request failed (${response.status}).`, {
+      code: envelope.error?.code ?? "HTTP_ERROR",
+      details: envelope.error?.details,
+      path: envelope.path,
+      status: response.status,
+      timestamp: envelope.timestamp,
+    });
+  }
+
+  return envelope.data;
 }
 
-export async function adminPublicPost<TResponse, TBody = unknown>(
-  path: string,
-  body?: TBody
-): Promise<TResponse> {
-  return requestApi<TResponse>({
-    data: body,
-    method: "POST",
-    url: path,
-  });
-}
-
-export async function adminGet<T>(
-  path: string,
-  params?: ApiQueryParams
-): Promise<T> {
-  return requestAdmin<T>("GET", path, { params });
-}
-
-export async function adminPost<TResponse, TBody = unknown>(
-  path: string,
-  body?: TBody
-): Promise<TResponse> {
+export function adminPublicPost<TResponse, TBody = unknown>(path: string, body?: TBody) {
   return requestAdmin<TResponse>("POST", path, { body });
 }
 
-export async function adminPut<TResponse, TBody = unknown>(
-  path: string,
-  body?: TBody
-): Promise<TResponse> {
+export function adminGet<T>(path: string, params?: ApiQueryParams) {
+  return requestAdmin<T>("GET", path, { params });
+}
+
+export function adminPost<TResponse, TBody = unknown>(path: string, body?: TBody) {
+  return requestAdmin<TResponse>("POST", path, { body });
+}
+
+export function adminPut<TResponse, TBody = unknown>(path: string, body?: TBody) {
   return requestAdmin<TResponse>("PUT", path, { body });
 }
 
-export async function adminPatch<TResponse, TBody = unknown>(
-  path: string,
-  body?: TBody
-): Promise<TResponse> {
+export function adminPatch<TResponse, TBody = unknown>(path: string, body?: TBody) {
   return requestAdmin<TResponse>("PATCH", path, { body });
 }
 
-export async function adminDelete<TResponse = void>(
-  path: string
-): Promise<TResponse> {
-  return requestAdmin<TResponse>("DELETE", path);
+export function adminDelete<TResponse = void>(path: string, body?: unknown) {
+  return requestAdmin<TResponse>("DELETE", path, { body });
 }

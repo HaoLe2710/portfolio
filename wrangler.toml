@@ -1,3 +1,17 @@
 name = "web-porfolio"
 pages_build_output_dir = "./out"
 compatibility_date = "2026-10-23"
+
+[[services]]
+binding = "ADMIN_API"
+service = "web-portfolio-api-staging"
+
+[env.production]
+[[env.production.services]]
+binding = "ADMIN_API"
+service = "web-portfolio-api"
+
+[env.preview]
+[[env.preview.services]]
+binding = "ADMIN_API"
+service = "web-portfolio-api-staging"

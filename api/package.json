@@ -6,14 +6,21 @@
   "scripts": {
     "dev": "wrangler dev --ip 127.0.0.1 --port 8787",
     "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --config wrangler.staging.toml",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:migrate:local": "wrangler d1 migrations apply portfolio_db --local",
     "db:migrate:remote": "wrangler d1 migrations apply portfolio_db --remote",
+    "db:migrate:staging": "wrangler d1 migrations apply portfolio_db_staging --remote --config wrangler.staging.toml",
     "db:seed:local": "tsx scripts/seed-initial.ts --local",
-    "db:seed:remote": "tsx scripts/seed-initial.ts --remote --confirm portfolio_db"
+    "db:seed:remote": "tsx scripts/seed-initial.ts --remote --confirm portfolio_db",
+    "db:seed:staging": "tsx scripts/seed-initial.ts --remote --staging --confirm-staging",
+    "admin:bootstrap:local": "tsx scripts/bootstrap-admin.ts --local",
+    "admin:bootstrap:staging": "tsx scripts/bootstrap-admin.ts --remote --staging --confirm-staging",
+    "smoke:staging": "tsx scripts/smoke-admin-staging.ts --confirm-staging"
   },
   "dependencies": {
+    "argon2id": "1.0.1",
     "hono": "^4.13.13",
     "zod": "^4.4.3"
   },

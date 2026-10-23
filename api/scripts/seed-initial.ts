@@ -13,12 +13,18 @@ async function main() {
   const args = process.argv.slice(2);
   const isRemote = args.includes("--remote");
   const isLocal = args.includes("--local");
+  const isStaging = args.includes("--staging");
   if (isRemote === isLocal) {
     throw new Error("Pass exactly one target flag: --local or --remote.");
   }
-  const confirmIndex = args.indexOf("--confirm");
-  if (isRemote && (confirmIndex < 0 || args[confirmIndex + 1] !== "portfolio_db")) {
-    throw new Error("Remote seed requires the exact confirmation: --confirm portfolio_db.");
+  if (isStaging && (!isRemote || !args.includes("--confirm-staging"))) {
+    throw new Error("Staging seed requires: --remote --staging --confirm-staging.");
+  }
+  if (!isStaging && isRemote) {
+    const confirmIndex = args.indexOf("--confirm");
+    if (confirmIndex < 0 || args[confirmIndex + 1] !== "portfolio_db") {
+      throw new Error("Production seed requires the exact confirmation: --confirm portfolio_db.");
+    }
   }
 
   const source = await readFile(SOURCE_FILE);
@@ -28,7 +34,9 @@ async function main() {
   const sqlPath = resolve(OUTPUT_DIR, "initial-seed.sql");
   await writeFile(sqlPath, sql, "utf8");
 
-  const wranglerArgs = ["exec", "wrangler", "d1", "execute", "portfolio_db"];
+  const database = isStaging ? "portfolio_db_staging" : "portfolio_db";
+  const wranglerArgs = ["exec", "wrangler", "d1", "execute", database];
+  if (isStaging) wranglerArgs.push("--config", "wrangler.staging.toml");
   wranglerArgs.push(isRemote ? "--remote" : "--local", `--file=${sqlPath}`);
   const run = spawnSync("pnpm", wranglerArgs, {
     cwd: resolve(SCRIPT_DIR, ".."),
@@ -42,7 +50,7 @@ async function main() {
 
   console.log(
     JSON.stringify(
-      { target: isRemote ? "remote:portfolio_db" : "local:portfolio_db", sourceHash, importedCounts },
+      { target: isRemote ? `remote:${database}` : `local:${database}`, sourceHash, importedCounts },
       null,
       2
     )

@@ -56,7 +56,7 @@ Pages project `web-porfolio` đã kết nối với GitHub repository `HaoLe2710
 Build command là `bash scripts/cloudflare-pages-build.sh`. Script đặt môi trường theo branch:
 
 - `main` build từ Worker API, canonical `https://web-porfolio.pages.dev` và `index, follow`.
-- Các branch preview build từ Worker API production tại `https://web-portfolio-api.lengochao123-27102004.workers.dev/api`, dùng `CF_PAGES_URL` làm canonical của chính preview và sinh `noindex, follow`.
+- Các branch preview build từ staging Worker/D1 tại `https://web-portfolio-api-staging.lengochao123-27102004.workers.dev/api`, dùng `CF_PAGES_URL` làm canonical của chính preview và sinh `noindex, follow`.
 
 Pages build image dùng Node `22` và pnpm `11.9.0`, khớp `.nvmrc` và `packageManager`. Output `out` giữ nguyên. Cấu hình build có thể xác minh bằng Cloudflare Dashboard → Workers & Pages → `web-porfolio` → Settings → Builds & deployments. Không thêm Worker secrets hoặc D1 binding vào Pages; trình duyệt chỉ nhận HTML tĩnh.
 
@@ -91,5 +91,45 @@ pnpm api:dev
 Worker local chạy tại `http://127.0.0.1:8787`; API base URL là `http://127.0.0.1:8787/api`. Các migration, seed an toàn, endpoint và bước deploy/rollback được ghi trong [api/README.md](api/README.md).
 
 Production Pages build bằng API sau khi D1 remote đã migrate/seed, Worker production đã kiểm thử, API-mode static build và data parity pass, và Pages preview xác nhận SEO/routes. Nếu build API thất bại, build sẽ dừng và giữ deployment production đang hoạt động cho tới khi phát hành mới.
+
+## CMS admin (Phase 3, draft-only)
+
+CMS chạy tại `/admin` trên cùng Pages origin. Giao diện vẫn được xuất tĩnh; `functions/api/admin/[[path]].ts` chuyển tiếp riêng `/api/admin/*` qua Pages Service Binding. Preview dùng Worker `web-portfolio-api-staging`; production chỉ dùng Worker `web-portfolio-api` sau khi triển khai Phase 3 được chấp thuận. Không cần CORS hoặc third-party cookie. Trang admin có `noindex`, `X-Robots-Tag`, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: same-origin` và không được cache. API response admin đặt `Cache-Control: no-store, private`.
+
+Đăng nhập chỉ dành cho owner/admin đã được bootstrap. Không có đăng ký công khai. Mật khẩu mới dùng Argon2id v1.3 (salt ngẫu nhiên 16 byte, hash 32 byte, 19.456 KiB bộ nhớ, 2 lượt, 1 lane) qua WASM trên Worker. Tài khoản PBKDF2-SHA-256 cũ (100.000 vòng) vẫn đăng nhập được và được nâng cấp sang Argon2id sau lần đăng nhập hợp lệ. Session random chỉ lưu hash trong D1 và dùng cookie `HttpOnly`, `SameSite=Lax`, `Secure` trên HTTPS. POST/PUT/PATCH/DELETE và đăng nhập phải có `Origin` cùng origin. Đăng nhập bị giới hạn 5 lần mỗi 15 phút theo IP. Đổi mật khẩu thu hồi mọi session.
+
+CMS đọc snapshot từ các bảng published hiện có, nhưng thao tác Save/Discard/Restore chỉ ghi các bảng `admin_*` của migration `0002_admin_cms.sql`. Mỗi lần lưu tạo revision và audit entry; cập nhật có kiểm tra version để phát hiện thay đổi đồng thời. Không có publish route, deploy hook hay ghi vào các bảng public. Preview chỉ hiện trong phiên CMS đã đăng nhập. R2, media upload, publish workflow và Worker API cho public write nằm ngoài Phase 3.
+
+### Chạy CMS local
+
+```bash
+pnpm db:migrate:local
+pnpm db:seed:local
+pnpm admin:bootstrap:local
+```
+
+Lệnh bootstrap hỏi email và mật khẩu trực tiếp trong terminal; mật khẩu không được echo hay ghi vào repo. Sau đó chạy Worker và Pages ở hai terminal:
+
+```bash
+pnpm exec wrangler dev --config api/wrangler.toml --name web-portfolio-api-staging --ip 127.0.0.1 --port 8787
+pnpm preview:pages
+```
+
+Local browser suite tự khởi động cả hai process theo đúng thứ tự và kiểm tra Pages Function qua Service Binding. `pnpm api:test` kiểm tra auth/session, CSRF/origin, rate limit, role, snapshot/revision isolation, optimistic concurrency và schema.
+
+### Staging Cloudflare
+
+Staging phải là D1 riêng tên `portfolio_db_staging`, Worker `web-portfolio-api-staging` và Pages preview deployment. Không chạy migration/seed/bootstrap staging với `api/wrangler.toml` hay production database. Sau khi tạo D1 staging, thêm UUID trả về vào `api/wrangler.staging.toml`; sau đó:
+
+```bash
+pnpm db:migrate:staging
+pnpm db:seed:staging
+pnpm admin:bootstrap:staging
+pnpm api:deploy:staging
+```
+
+Bootstrap staging cũng yêu cầu terminal tương tác và email/mật khẩu do operator chọn. Wrangler Pages phải đọc `wrangler.toml` để áp dụng service binding: preview → `web-portfolio-api-staging`, production → `web-portfolio-api`. Trong Dashboard xác minh Workers & Pages → `web-porfolio` → Settings → Functions → Service bindings; cấu hình Git integration hiện tại tiếp tục dùng branch previews. Chỉ chuyển Worker production sau backup, migration review, staging E2E và security acceptance.
+
+Migration `0002_admin_cms.sql` và `0003_argon2id_auth.sql` additive; không sửa `0001_init_schema.sql`. `0003` giữ tương thích tài khoản PBKDF2 cũ. Nếu CMS cần rollback, gỡ route/Pages Function bằng commit revert rồi triển khai phiên bản Worker trước đó; giữ các bảng `admin_*` cho đến khi backup và phê duyệt riêng việc xóa. Không áp dụng rollback SQL phá hủy trên production.
 
 Tài liệu: [Next.js Static Exports](https://nextjs.org/docs/app/guides/static-exports), [Cloudflare Pages static Next.js deployment](https://developers.cloudflare.com/pages/framework-guides/nextjs/deploy-a-static-nextjs-site/), [Pages redirects](https://developers.cloudflare.com/pages/configuration/redirects/) và [Wrangler Pages configuration](https://developers.cloudflare.com/pages/functions/wrangler-configuration/).

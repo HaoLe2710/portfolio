@@ -6,6 +6,7 @@ import type { Locale, ProjectContentBlock } from "../../src/types/portfolio";
 import app from "../src/app";
 import { buildSeedSql } from "../src/seed-data";
 import schemaSql from "../migrations/0001_init_schema.sql?raw";
+import adminSchemaSql from "../migrations/0002_admin_cms.sql?raw";
 import type { WorkerBindings } from "../src/types/env";
 
 const bindings: WorkerBindings = {
@@ -68,7 +69,14 @@ beforeAll(async () => {
       .map((statement) => statement.trim())
       .filter(Boolean),
   };
-  await applyD1Migrations(env.DB, [migration]);
+  const adminMigration = {
+    name: "0002_admin_cms",
+    queries: adminSchemaSql
+      .split(";")
+      .map((statement) => statement.trim())
+      .filter(Boolean),
+  };
+  await applyD1Migrations(env.DB, [migration, adminMigration]);
   for (const statement of buildSeedSql("vitest-mock-baseline").statements) {
     await env.DB.prepare(statement).run();
   }

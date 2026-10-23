@@ -26,7 +26,8 @@ export type ErrorEnvelope = {
 export function successResponse<T>(
   context: Context<WorkerEnv>,
   data: T,
-  message = "Success"
+  message = "Success",
+  status: 200 | 201 = 200
 ) {
   const body: SuccessEnvelope<T> = {
     success: true,
@@ -37,12 +38,12 @@ export function successResponse<T>(
     path: context.req.path,
   };
 
-  return context.json(body, 200);
+  return context.json(body, status);
 }
 
 export function errorResponse(
   context: Context<WorkerEnv>,
-  status: 400 | 404 | 500,
+  status: 400 | 401 | 403 | 404 | 409 | 429 | 500,
   code: string,
   message: string,
   details?: Record<string, unknown>
