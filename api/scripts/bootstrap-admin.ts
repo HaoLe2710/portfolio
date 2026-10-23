@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { writeFile, rm } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { hashPassword } from "../src/admin/password";
+import { hashPasswordNode } from "./argon2id-node";
 
 function escapeSql(value: string) {
   return `'${value.replace(/'/g, "''")}'`;
@@ -65,24 +65,32 @@ async function main() {
   const args = new Set(process.argv.slice(2));
   const local = args.has("--local");
   const remote = args.has("--remote");
+  const nonInteractive = args.has("--non-interactive");
   if (local === remote) throw new Error("Choose exactly one target: --local or --remote.");
   if (remote && (!args.has("--staging") || !args.has("--confirm-staging"))) {
     throw new Error("Remote bootstrap is limited to the isolated staging database. Use --remote --staging --confirm-staging.");
   }
+  if (nonInteractive && (!remote || !args.has("--staging") || !args.has("--confirm-staging"))) {
+    throw new Error("Non-interactive credential bootstrap is limited to explicitly confirmed staging D1.");
+  }
 
-  const email = await promptEmail();
+  const email = nonInteractive
+    ? (process.env.PORTFOLIO_BOOTSTRAP_EMAIL ?? "").trim().toLowerCase()
+    : await promptEmail();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
     throw new Error("Enter a valid email address.");
   }
-  const password = await promptPassword();
+  const password = nonInteractive
+    ? process.env.PORTFOLIO_BOOTSTRAP_PASSWORD ?? ""
+    : await promptPassword();
   if (password.length < 12 || password.length > 256) {
     throw new Error("Password must contain between 12 and 256 characters.");
   }
-  const credentials = await hashPassword(password);
+  const credentials = await hashPasswordNode(password);
   const id = randomUUID();
   const sqlPath = join(tmpdir(), `portfolio-admin-bootstrap-${randomUUID()}.sql`);
-  const sql = `INSERT INTO admin_users (id, email, password_salt, password_hash, password_iterations, role)
-SELECT ${escapeSql(id)}, ${escapeSql(email)}, ${escapeSql(credentials.salt)}, ${escapeSql(credentials.hash)}, ${credentials.iterations}, 'OWNER'
+  const sql = `INSERT INTO admin_users (id, email, password_salt, password_hash, password_iterations, password_algorithm, role)
+SELECT ${escapeSql(id)}, ${escapeSql(email)}, ${escapeSql(credentials.salt)}, ${escapeSql(credentials.hash)}, ${credentials.iterations}, ${escapeSql(credentials.algorithm)}, 'OWNER'
 WHERE NOT EXISTS (SELECT 1 FROM admin_users WHERE role = 'OWNER');
 SELECT email, role FROM admin_users WHERE role = 'OWNER';\n`;
 

@@ -4,9 +4,10 @@ import { errorResponse, successResponse } from "../utils/api-response";
 import type { WorkerEnv } from "../types/env";
 import { AdminError } from "./errors";
 import {
-  CURRENT_PASSWORD_ITERATIONS,
+  CURRENT_PASSWORD_ALGORITHM,
   DUMMY_PASSWORD_HASH,
   DUMMY_PASSWORD_SALT,
+  LEGACY_PASSWORD_ITERATIONS,
   hashPassword,
   randomToken,
   sha256,
@@ -25,6 +26,7 @@ type AdminUserRow = {
   password_salt: string;
   password_hash: string;
   password_iterations: number;
+  password_algorithm: string;
   role: "OWNER" | "ADMIN";
 };
 
@@ -121,7 +123,7 @@ export async function login(context: Context<WorkerEnv>) {
   }
 
   const admin = await context.env.DB.prepare(
-    `SELECT id, email, password_salt, password_hash, password_iterations, role
+    `SELECT id, email, password_salt, password_hash, password_iterations, password_algorithm, role
      FROM admin_users WHERE email = ? LIMIT 1`
   ).bind(body.data.email.toLowerCase()).first<AdminUserRow>();
 
@@ -129,7 +131,8 @@ export async function login(context: Context<WorkerEnv>) {
     body.data.password,
     admin?.password_salt ?? DUMMY_PASSWORD_SALT,
     admin?.password_hash ?? DUMMY_PASSWORD_HASH,
-    admin?.password_iterations ?? CURRENT_PASSWORD_ITERATIONS
+    admin?.password_iterations ?? LEGACY_PASSWORD_ITERATIONS,
+    admin?.password_algorithm ?? CURRENT_PASSWORD_ALGORITHM
   );
 
   if (!admin || !passwordMatches) {
@@ -139,6 +142,23 @@ export async function login(context: Context<WorkerEnv>) {
       metadata: { reason: "invalid_credentials", accountRecordFound: Boolean(admin) },
     });
     return errorResponse(context, 401, "UNAUTHORIZED", "Email or password is incorrect.");
+  }
+
+  if (admin.password_algorithm !== CURRENT_PASSWORD_ALGORITHM) {
+    const replacement = await hashPassword(body.data.password);
+    await context.env.DB.prepare(
+      `UPDATE admin_users SET password_salt = ?, password_hash = ?, password_iterations = ?, password_algorithm = ?,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+       password_changed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ? AND password_algorithm = ?`
+    ).bind(
+      replacement.salt,
+      replacement.hash,
+      replacement.iterations,
+      replacement.algorithm,
+      admin.id,
+      admin.password_algorithm
+    ).run();
   }
 
   await context.env.DB.prepare("DELETE FROM admin_login_attempts WHERE key_hash = ?").bind(rateKey).run();
@@ -226,9 +246,15 @@ export async function changePassword(context: Context<WorkerEnv>) {
   }
 
   const user = await context.env.DB.prepare(
-    `SELECT password_salt, password_hash, password_iterations FROM admin_users WHERE id = ?`
-  ).bind(admin.id).first<Pick<AdminUserRow, "password_salt" | "password_hash" | "password_iterations">>();
-  if (!user || !(await verifyPassword(body.data.currentPassword, user.password_salt, user.password_hash, user.password_iterations))) {
+    `SELECT password_salt, password_hash, password_iterations, password_algorithm FROM admin_users WHERE id = ?`
+  ).bind(admin.id).first<Pick<AdminUserRow, "password_salt" | "password_hash" | "password_iterations" | "password_algorithm">>();
+  if (!user || !(await verifyPassword(
+    body.data.currentPassword,
+    user.password_salt,
+    user.password_hash,
+    user.password_iterations,
+    user.password_algorithm as typeof CURRENT_PASSWORD_ALGORITHM | "pbkdf2-sha256"
+  ))) {
     await writeAudit(context, { action: "PASSWORD_CHANGE_FAILED", actorId: admin.id });
     return errorResponse(context, 401, "UNAUTHORIZED", "Current password is incorrect.");
   }
@@ -236,10 +262,10 @@ export async function changePassword(context: Context<WorkerEnv>) {
   const password = await hashPassword(body.data.newPassword);
   await context.env.DB.batch([
     context.env.DB.prepare(
-      `UPDATE admin_users SET password_salt = ?, password_hash = ?, password_iterations = ?,
+      `UPDATE admin_users SET password_salt = ?, password_hash = ?, password_iterations = ?, password_algorithm = ?,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
        password_changed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
-    ).bind(password.salt, password.hash, password.iterations, admin.id),
+    ).bind(password.salt, password.hash, password.iterations, password.algorithm, admin.id),
     context.env.DB.prepare(
       `UPDATE admin_sessions SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
        WHERE admin_id = ? AND revoked_at IS NULL`

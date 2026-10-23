@@ -20,6 +20,7 @@
     "smoke:staging": "tsx scripts/smoke-admin-staging.ts --confirm-staging"
   },
   "dependencies": {
+    "argon2id": "1.0.1",
     "hono": "^4.13.13",
     "zod": "^4.4.3"
   },

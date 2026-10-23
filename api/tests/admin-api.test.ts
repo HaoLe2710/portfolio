@@ -4,9 +4,17 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { mockPortfolio } from "../../src/data/mock-portfolio";
 import app from "../src/app";
 import { buildSeedSql } from "../src/seed-data";
-import { hashPassword, sha256, verifyPassword } from "../src/admin/password";
+import {
+  CURRENT_PASSWORD_ALGORITHM,
+  LEGACY_PASSWORD_ALGORITHM,
+  LEGACY_PASSWORD_ITERATIONS,
+  hashPassword,
+  sha256,
+  verifyPassword,
+} from "../src/admin/password";
 import { BLOCK_TYPES, validateSnapshot } from "../src/admin/schemas";
 import adminSchemaSql from "../migrations/0002_admin_cms.sql?raw";
+import passwordSchemaSql from "../migrations/0003_argon2id_auth.sql?raw";
 import schemaSql from "../migrations/0001_init_schema.sql?raw";
 import type { WorkerBindings } from "../src/types/env";
 
@@ -59,26 +67,70 @@ beforeAll(async () => {
   await applyD1Migrations(env.DB, [
     { name: "0001_init_schema", queries: schemaSql.split(";").map((s) => s.trim()).filter(Boolean) },
     { name: "0002_admin_cms", queries: adminSchemaSql.split(";").map((s) => s.trim()).filter(Boolean) },
+    { name: "0003_argon2id_auth", queries: passwordSchemaSql.split(";").map((s) => s.trim()).filter(Boolean) },
   ]);
   for (const statement of buildSeedSql("phase3-admin-tests").statements) {
     await env.DB.prepare(statement).run();
   }
   const password = await hashPassword(ownerPassword);
   await env.DB.prepare(
-    `INSERT OR REPLACE INTO admin_users (id, email, password_salt, password_hash, password_iterations, role)
-     VALUES (?, ?, ?, ?, ?, 'OWNER')`
-  ).bind(ownerId, ownerEmail, password.salt, password.hash, password.iterations).run();
+    `INSERT OR REPLACE INTO admin_users (id, email, password_salt, password_hash, password_iterations, password_algorithm, role)
+     VALUES (?, ?, ?, ?, ?, ?, 'OWNER')`
+  ).bind(ownerId, ownerEmail, password.salt, password.hash, password.iterations, password.algorithm).run();
   const response = await login();
   expect(response.status).toBe(200);
   sessionCookie = response.headers.get("set-cookie") ?? "";
 });
 
 describe("Admin authentication and security", () => {
-  it("uses the maximum PBKDF2 work factor accepted by Cloudflare Workers", async () => {
+  it("uses the Argon2id production profile and rejects an incorrect password", async () => {
     const hash = await hashPassword(ownerPassword);
-    expect(hash.iterations).toBe(100_000);
-    expect(await verifyPassword(ownerPassword, hash.salt, hash.hash, hash.iterations)).toBe(true);
-    expect(await verifyPassword(ownerPassword, hash.salt, hash.hash, 100_001)).toBe(false);
+    expect(hash.algorithm).toBe(CURRENT_PASSWORD_ALGORITHM);
+    expect(hash.iterations).toBe(LEGACY_PASSWORD_ITERATIONS);
+    expect(await verifyPassword(ownerPassword, hash.salt, hash.hash, hash.iterations, hash.algorithm)).toBe(true);
+    expect(await verifyPassword("wrong password", hash.salt, hash.hash, hash.iterations, hash.algorithm)).toBe(false);
+    expect(await verifyPassword(ownerPassword, hash.salt, hash.hash, hash.iterations, "unsupported")).toBe(false);
+  });
+
+  it("serializes concurrent Argon2id work safely within the reused Worker isolate", async () => {
+    const candidates = ["parallel-one-password", "parallel-two-password", "parallel-three-password"];
+    const hashes = await Promise.all(candidates.map((password) => hashPassword(password)));
+    const checks = await Promise.all(candidates.map((password, index) => {
+      const hash = hashes[index]!;
+      return verifyPassword(password, hash.salt, hash.hash, hash.iterations, hash.algorithm);
+    }));
+    expect(checks).toEqual([true, true, true]);
+  });
+
+  it("transparently upgrades a legacy PBKDF2 account after a valid login", async () => {
+    const legacyId = "phase3-legacy-owner";
+    const legacyEmail = "phase3-legacy-owner@example.invalid";
+    const legacyPassword = "Legacy-Password-2026!";
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(legacyPassword), "PBKDF2", false, ["deriveBits"]);
+    const digest = await crypto.subtle.deriveBits({
+      name: "PBKDF2",
+      hash: "SHA-256",
+      salt,
+      iterations: LEGACY_PASSWORD_ITERATIONS,
+    }, key, 256);
+    const encode = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    await env.DB.prepare(
+      `INSERT OR REPLACE INTO admin_users (id, email, password_salt, password_hash, password_iterations, password_algorithm, role)
+       VALUES (?, ?, ?, ?, ?, ?, 'OWNER')`
+    ).bind(legacyId, legacyEmail, encode(salt), encode(new Uint8Array(digest)), LEGACY_PASSWORD_ITERATIONS, LEGACY_PASSWORD_ALGORITHM).run();
+
+    const response = await request("/api/admin/auth/login", {
+      method: "POST",
+      headers: { "CF-Connecting-IP": "legacy-upgrade-test" },
+      body: JSON.stringify({ email: legacyEmail, password: legacyPassword }),
+    }, "");
+    expect(response.status).toBe(200);
+    const upgraded = await env.DB.prepare("SELECT password_algorithm, password_salt, password_hash FROM admin_users WHERE id = ?")
+      .bind(legacyId).first<{ password_algorithm: string; password_salt: string; password_hash: string }>();
+    expect(upgraded?.password_algorithm).toBe(CURRENT_PASSWORD_ALGORITHM);
+    expect(await verifyPassword(legacyPassword, upgraded!.password_salt, upgraded!.password_hash, LEGACY_PASSWORD_ITERATIONS, CURRENT_PASSWORD_ALGORITHM)).toBe(true);
+    expect(await verifyPassword(legacyPassword, encode(salt), encode(new Uint8Array(digest)), LEGACY_PASSWORD_ITERATIONS, LEGACY_PASSWORD_ALGORITHM)).toBe(true);
   });
 
   it("requires a server-verified session and keeps only a token hash", async () => {

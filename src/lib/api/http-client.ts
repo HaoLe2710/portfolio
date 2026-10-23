@@ -6,7 +6,16 @@ import { toApiError } from "./api-error";
 import { unwrapApiResponse, type ApiResponse } from "./api-response";
 
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8787/api";
-const DEFAULT_TIMEOUT_MS = 10000;
+const DEFAULT_TIMEOUT_MS = 30000;
+const MAX_GET_ATTEMPTS = 3;
+
+function shouldRetryGet(error: unknown, method: string | undefined, attempt: number) {
+  if (attempt + 1 >= MAX_GET_ATTEMPTS || method?.toUpperCase() !== "GET" || !axios.isAxiosError(error)) {
+    return false;
+  }
+
+  return !error.response && ["ERR_NETWORK", "ECONNABORTED", "ETIMEDOUT"].includes(error.code ?? "");
+}
 
 function resolveApiBaseUrl() {
   const configuredUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
@@ -66,11 +75,19 @@ export const httpClient: AxiosInstance = axios.create({
 export async function requestApi<T>(
   config: AxiosRequestConfig
 ): Promise<T> {
-  try {
-    const response = await httpClient.request<ApiResponse<T>>(config);
+  for (let attempt = 0; attempt < MAX_GET_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await httpClient.request<ApiResponse<T>>(config);
 
-    return unwrapApiResponse<T>(response.data);
-  } catch (error) {
-    throw toApiError(error);
+      return unwrapApiResponse<T>(response.data);
+    } catch (error) {
+      if (shouldRetryGet(error, config.method, attempt)) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+        continue;
+      }
+      throw toApiError(error);
+    }
   }
+
+  throw new Error("API request exhausted its retry attempts.");
 }

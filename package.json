@@ -11,6 +11,7 @@
     "preview:pages": "wrangler pages dev --ip 127.0.0.1 --port 8788",
     "verify:static": "node scripts/verify-static-export.mjs",
     "test:browser": "playwright test",
+    "test:admin:preview": "node scripts/smoke-admin-preview.mjs",
     "test:smoke": "npm run build && npm run verify:static && npm run test:browser",
     "api:dev": "pnpm --filter @portfolio/api dev",
     "api:deploy": "pnpm --filter @portfolio/api run deploy",
