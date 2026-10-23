@@ -5,4 +5,11 @@ export type WorkerBindings = {
 
 export type WorkerEnv = {
   Bindings: WorkerBindings;
+  Variables: {
+    admin: {
+      id: string;
+      email: string;
+      role: "OWNER" | "ADMIN";
+    };
+  };
 };

@@ -14,12 +14,18 @@
     "test:smoke": "npm run build && npm run verify:static && npm run test:browser",
     "api:dev": "pnpm --filter @portfolio/api dev",
     "api:deploy": "pnpm --filter @portfolio/api run deploy",
+    "api:deploy:staging": "pnpm --filter @portfolio/api run deploy:staging",
     "api:typecheck": "pnpm --filter @portfolio/api typecheck",
     "api:test": "pnpm --filter @portfolio/api test",
     "db:migrate:local": "pnpm --filter @portfolio/api db:migrate:local",
     "db:migrate:remote": "pnpm --filter @portfolio/api db:migrate:remote",
+    "db:migrate:staging": "pnpm --filter @portfolio/api db:migrate:staging",
     "db:seed:local": "pnpm --filter @portfolio/api db:seed:local",
-    "db:seed:remote": "pnpm --filter @portfolio/api db:seed:remote"
+    "db:seed:remote": "pnpm --filter @portfolio/api db:seed:remote",
+    "db:seed:staging": "pnpm --filter @portfolio/api db:seed:staging",
+    "admin:bootstrap:local": "pnpm --filter @portfolio/api admin:bootstrap:local",
+    "admin:bootstrap:staging": "pnpm --filter @portfolio/api admin:bootstrap:staging",
+    "api:smoke:staging": "pnpm --filter @portfolio/api smoke:staging"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

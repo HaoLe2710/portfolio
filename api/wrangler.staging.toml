@@ -1,0 +1,16 @@
+name = "web-portfolio-api-staging"
+main = "src/index.ts"
+compatibility_date = "2026-10-23"
+workers_dev = true
+
+[observability]
+enabled = true
+
+[vars]
+CORS_ALLOWED_ORIGINS = "http://localhost:3000"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "portfolio_db_staging"
+database_id = "e64c898b-0bc0-4e92-8f61-f56d534ff778"
+migrations_dir = "migrations"

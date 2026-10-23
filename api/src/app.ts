@@ -17,6 +17,8 @@ import { ApiError } from "./utils/api-error";
 import { errorResponse, successResponse } from "./utils/api-response";
 import { parseLocale, parseSlug } from "./validators/public-query";
 import type { WorkerEnv } from "./types/env";
+import adminRoutes from "./admin/routes";
+import { AdminError } from "./admin/errors";
 
 const app = new Hono<WorkerEnv>();
 
@@ -31,7 +33,7 @@ function allowedOrigins(configured: string | undefined) {
 
 app.use("*", requestLogger);
 app.use(
-  "/api/*",
+  "/api/public/*",
   cors({
     origin: (origin, context) =>
       allowedOrigins(context.env.CORS_ALLOWED_ORIGINS).has(origin)
@@ -42,6 +44,8 @@ app.use(
     maxAge: 600,
   })
 );
+
+app.route("/api/admin", adminRoutes);
 
 app.get("/healthz", async (context) => {
   const row = await context.env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
@@ -136,6 +140,10 @@ app.notFound((context) =>
 );
 
 app.onError((error, context) => {
+  if (error instanceof AdminError) {
+    return errorResponse(context, error.status, error.code, error.message, error.details);
+  }
+
   if (error instanceof ApiError) {
     return errorResponse(
       context,
