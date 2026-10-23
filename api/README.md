@@ -93,9 +93,9 @@ pnpm api:deploy
 
 The Worker uses the `workers.dev` hostname assigned by Cloudflare. Its URL must be taken from the actual deploy output; do not put a guessed hostname in Pages configuration.
 
-Pages Git integration uses `bash scripts/cloudflare-pages-build.sh`. On `main`, this currently exports the existing mock-backed production site. On preview branches, it builds from the deployed Worker API, uses Cloudflare's `CF_PAGES_URL` as the canonical origin, and sets `robots` to noindex. This lets preview deployment validate the real D1-backed content while production remains unchanged.
+Pages Git integration uses `bash scripts/cloudflare-pages-build.sh`. On `main`, it builds from the deployed Worker API using the production canonical origin and indexability. On preview branches, it builds from the same API, uses Cloudflare's `CF_PAGES_URL` as the canonical origin, and sets `robots` to noindex.
 
-Keep Pages production on `NEXT_PUBLIC_DATA_SOURCE=mock` until the remote migration/seed, live Worker endpoint tests, API-mode static build, route/SEO/data parity checks, and a Pages preview deployment all pass. If an API-mode production build fails, restore the previous mock build settings and redeploy the last known-good Pages commit. Worker and Pages releases are separate; rolling back the Worker does not alter the static Pages assets.
+If a production API build fails, restore the previous mock build command and redeploy the last known-good Pages commit. Worker and Pages releases are separate; rolling back the Worker does not alter the static Pages assets.
 
 ## Scope boundary
 

@@ -55,19 +55,19 @@ Pages project `web-porfolio` đã kết nối với GitHub repository `HaoLe2710
 
 Build command là `bash scripts/cloudflare-pages-build.sh`. Script đặt môi trường theo branch:
 
-- `main` hiện tiếp tục build `mock`, canonical `https://web-porfolio.pages.dev` và `index, follow` cho tới khi API-mode preview qua nghiệm thu.
+- `main` build từ Worker API, canonical `https://web-porfolio.pages.dev` và `index, follow`.
 - Các branch preview build từ Worker API production tại `https://web-portfolio-api.lengochao123-27102004.workers.dev/api`, dùng `CF_PAGES_URL` làm canonical của chính preview và sinh `noindex, follow`.
 
 Pages build image dùng Node `22` và pnpm `11.9.0`, khớp `.nvmrc` và `packageManager`. Output `out` giữ nguyên. Cấu hình build có thể xác minh bằng Cloudflare Dashboard → Workers & Pages → `web-porfolio` → Settings → Builds & deployments. Không thêm Worker secrets hoặc D1 binding vào Pages; trình duyệt chỉ nhận HTML tĩnh.
 
-Khi API-mode preview pass data parity, sitemap/metadata, direct refresh, 404 và responsive smoke test, có thể chuyển nhánh `main` từ `mock` sang `api` trong [scripts/cloudflare-pages-build.sh](scripts/cloudflare-pages-build.sh) rồi push commit để Pages chạy production deployment. Production không chuyển nguồn chỉ vì Worker đã deploy.
+API-mode preview đã qua data parity, sitemap/metadata, direct refresh, 404 và responsive smoke test. Build command trên cả `main` lẫn Preview dùng Worker API; `main` dùng canonical production URL và indexability, còn Preview dùng URL riêng và `noindex`.
 
 ## Environment variables
 
 | Biến | Nơi cấu hình | Mô tả |
 | --- | --- | --- |
-| `NEXT_PUBLIC_DATA_SOURCE` | Do `scripts/cloudflare-pages-build.sh` đặt | `mock` trên main trong giai đoạn nghiệm thu API; `api` trên Preview. |
-| `NEXT_PUBLIC_API_BASE_URL` | Do build script đặt trên Preview | Worker `/api` URL dùng lúc Next.js generate static HTML. |
+| `NEXT_PUBLIC_DATA_SOURCE` | Do `scripts/cloudflare-pages-build.sh` đặt | `api` trên main và Preview. |
+| `NEXT_PUBLIC_API_BASE_URL` | Do build script đặt | Worker `/api` URL dùng lúc Next.js generate static HTML. |
 | `NEXT_PUBLIC_SITE_URL` | Do build script đặt | Production domain trên main; `CF_PAGES_URL` trên Preview. |
 | `NEXT_PUBLIC_ROBOTS_INDEX` | Do build script đặt | `true` trên Production; `false` trên Preview. |
 | `NODE_VERSION` | `22` trong Pages build settings | Khớp `.nvmrc` để pin Node major cho build image. |
@@ -90,6 +90,6 @@ pnpm api:dev
 
 Worker local chạy tại `http://127.0.0.1:8787`; API base URL là `http://127.0.0.1:8787/api`. Các migration, seed an toàn, endpoint và bước deploy/rollback được ghi trong [api/README.md](api/README.md).
 
-Production Pages tiếp tục dùng `NEXT_PUBLIC_DATA_SOURCE=mock` cho tới khi D1 remote đã migrate/seed, Worker production đã kiểm thử, API-mode static build và data parity pass, và Pages preview xác nhận SEO/routes. Không chuyển production chỉ vì Worker đã deploy.
+Production Pages build bằng API sau khi D1 remote đã migrate/seed, Worker production đã kiểm thử, API-mode static build và data parity pass, và Pages preview xác nhận SEO/routes. Nếu build API thất bại, build sẽ dừng và giữ deployment production đang hoạt động cho tới khi phát hành mới.
 
 Tài liệu: [Next.js Static Exports](https://nextjs.org/docs/app/guides/static-exports), [Cloudflare Pages static Next.js deployment](https://developers.cloudflare.com/pages/framework-guides/nextjs/deploy-a-static-nextjs-site/), [Pages redirects](https://developers.cloudflare.com/pages/configuration/redirects/) và [Wrangler Pages configuration](https://developers.cloudflare.com/pages/functions/wrangler-configuration/).

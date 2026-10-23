@@ -4,8 +4,8 @@ set -euo pipefail
 branch="${CF_PAGES_BRANCH:-local}"
 
 if [[ "$branch" == "main" ]]; then
-  export NEXT_PUBLIC_DATA_SOURCE="mock"
-  unset NEXT_PUBLIC_API_BASE_URL
+  export NEXT_PUBLIC_DATA_SOURCE="api"
+  export NEXT_PUBLIC_API_BASE_URL="https://web-portfolio-api.lengochao123-27102004.workers.dev/api"
   export NEXT_PUBLIC_SITE_URL="https://web-porfolio.pages.dev"
   export NEXT_PUBLIC_ROBOTS_INDEX="true"
 else
