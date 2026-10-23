@@ -1,4 +1,4 @@
-import { publicGet } from "@/lib/api";
+import { isApiError, publicGet } from "@/lib/api";
 import type {
   HomeData,
   Locale,
@@ -49,6 +49,18 @@ function localeParams(locale: Locale) {
   return { locale };
 }
 
+async function getNullableBySlug<T>(request: () => Promise<T>): Promise<T | null> {
+  try {
+    return await request();
+  } catch (error) {
+    if (isApiError(error) && error.status === 404) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
 export const apiPortfolioSource: PortfolioSource = {
   async getAchievements(locale) {
     const achievements = await publicGet<PublicAchievementResponse[]>(
@@ -60,12 +72,14 @@ export const apiPortfolioSource: PortfolioSource = {
   },
 
   async getBlogPostBySlug(locale, slug) {
-    const blogPost = await publicGet<PublicBlogPostDetailResponse>(
-      endpoints.blogPost(slug),
-      localeParams(locale)
+    const blogPost = await getNullableBySlug(() =>
+      publicGet<PublicBlogPostDetailResponse>(
+        endpoints.blogPost(slug),
+        localeParams(locale)
+      )
     );
 
-    return mapPublicBlogDetail(blogPost, locale);
+    return blogPost ? mapPublicBlogDetail(blogPost, locale) : null;
   },
 
   async getBlogPosts(locale) {
@@ -144,12 +158,14 @@ export const apiPortfolioSource: PortfolioSource = {
   },
 
   async getProjectBySlug(locale, slug) {
-    const project = await publicGet<PublicProjectDetailResponse>(
-      endpoints.project(slug),
-      localeParams(locale)
+    const project = await getNullableBySlug(() =>
+      publicGet<PublicProjectDetailResponse>(
+        endpoints.project(slug),
+        localeParams(locale)
+      )
     );
 
-    return mapPublicProjectDetail(project, locale);
+    return project ? mapPublicProjectDetail(project, locale) : null;
   },
 
   async getProjects(locale) {

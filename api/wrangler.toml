@@ -1,0 +1,16 @@
+name = "web-portfolio-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-23"
+workers_dev = true
+
+[observability]
+enabled = true
+
+[vars]
+CORS_ALLOWED_ORIGINS = "https://web-porfolio.pages.dev,http://localhost:3000"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "portfolio_db"
+database_id = "deaecc85-9891-4dc4-85c8-93305055d020"
+migrations_dir = "migrations"

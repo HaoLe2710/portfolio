@@ -116,7 +116,7 @@ function mapPublicProjectLink(
   return {
     href: link.url,
     icon: link.icon ?? "open_in_new",
-    id: `${link.type ?? "link"}-${index}-${link.label}`,
+    id: link.id ?? `${link.type ?? "link"}-${index}-${link.label}`,
     label: link.label,
   };
 }
@@ -127,8 +127,9 @@ function mapMetadataLinks(
   return getObjectArray(metadata, "links").map((link, index) =>
     mapPublicProjectLink(
       {
+        id: getOptionalString(link.id),
         label: getString(link.label, `Link ${index + 1}`),
-        url: getString(link.url),
+        url: getString(link.url, getString(link.href)),
         icon: getOptionalString(link.icon),
         type: getOptionalString(link.type),
         primary: typeof link.primary === "boolean" ? link.primary : undefined,
@@ -329,7 +330,8 @@ export function mapPublicCertificates(
     issuer: certificate.issuer,
     kind: mapCertificateKind(certificate.status),
     locale,
-    official: Boolean(certificate.credentialUrl),
+    official:
+      certificate.official ?? Boolean(certificate.credentialUrl),
     title: certificate.title,
   }));
 }
@@ -339,10 +341,14 @@ export function mapPublicSiteSettings(
 ): LocalizedSiteSettings {
   return {
     authorName: dto.authorName,
-    defaultLocale: normalizeLocale(dto.locale),
+    defaultLocale: normalizeLocale(dto.defaultLocale ?? "en"),
     locale: normalizeLocale(dto.locale),
     siteName: dto.siteName,
-    supportedLocales: ["en", "vi"],
+    supportedLocales: dto.supportedLocales?.length
+      ? dto.supportedLocales.filter((locale): locale is Locale =>
+          SUPPORTED_LOCALES.has(locale as Locale)
+        )
+      : ["en", "vi"],
   };
 }
 

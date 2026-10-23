@@ -1,6 +1,6 @@
 # Hao.dev portfolio
 
-Frontend Next.js 16 cho portfolio cá nhân, xuất thành static site để chạy trên Cloudflare Pages. Phase 1 chỉ gồm nội dung portfolio, project, blog và i18n Việt/Anh; không có backend runtime, CMS, Worker API hay D1.
+Frontend Next.js 16 cho portfolio cá nhân, xuất thành static site để chạy trên Cloudflare Pages. Public site gồm nội dung portfolio, project, blog và i18n Việt/Anh; dữ liệu có thể được lấy từ mock source khi phát triển hoặc Worker API lúc build. Website không truy vấn backend theo từng lượt xem.
 
 ## Chạy local
 
@@ -51,33 +51,45 @@ Project và blog detail được sinh trước bằng `generateStaticParams`, l�
 
 ## Cloudflare Pages với Git integration
 
-Trong Cloudflare Dashboard:
+Pages project `web-porfolio` đã kết nối với GitHub repository `HaoLe2710/portfolio`, production branch `main`, root directory để trống và output directory `out`. Cấu hình Git integration triển khai theo push; không dùng Direct Upload.
 
-1. Tạo Pages project và kết nối Git repository.
-2. Để **Root directory** trống. Git repository `HaoLe2710/portfolio` được khởi tạo trực tiếp tại thư mục `frontend`, nên đây đã là repository root.
-3. Đặt **Build command** là `pnpm run build` và **Build output directory** là `out`.
-4. Trong **Settings → Environment variables**, ghim build toolchain bằng `NODE_VERSION=22` và `PNPM_VERSION=11.9.0`. `NODE_VERSION` khớp `.nvmrc`; `PNPM_VERSION` khớp `packageManager` trong `package.json`.
-5. Thêm các biến ứng dụng cho cả Production và Preview:
-   - `NEXT_PUBLIC_DATA_SOURCE=mock`
-   - `NEXT_PUBLIC_SITE_URL=https://<canonical-production-origin>`
-   - `NEXT_PUBLIC_ROBOTS_INDEX=true` trong Production và `false` trong Preview
-6. Nếu gắn custom domain, đặt `NEXT_PUBLIC_SITE_URL` thành origin custom domain (ví dụ `https://portfolio.example`) và chạy deployment mới để metadata được build lại.
+Build command là `bash scripts/cloudflare-pages-build.sh`. Script đặt môi trường theo branch:
 
-`NEXT_PUBLIC_SITE_URL` phải là origin canonical production cho cả hai môi trường; build Preview vẫn phát canonical về trang production. `NEXT_PUBLIC_ROBOTS_INDEX` bắt buộc trên Cloudflare Pages: Production phải là `true`, Preview phải là `false`. Trang Preview giữ `noindex, follow` để bot có thể đọc chỉ thị noindex.
+- `main` hiện tiếp tục build `mock`, canonical `https://web-porfolio.pages.dev` và `index, follow` cho tới khi API-mode preview qua nghiệm thu.
+- Các branch preview build từ Worker API production tại `https://web-portfolio-api.lengochao123-27102004.workers.dev/api`, dùng `CF_PAGES_URL` làm canonical của chính preview và sinh `noindex, follow`.
 
-`wrangler.toml` khai báo Pages project name `web-porfolio` và output `./out` cho Wrangler local preview/Direct Upload. Đổi `name` nếu Pages project thực tế dùng tên khác. Khi dùng cấu hình Wrangler để deploy, giữ project name và output directory đồng bộ với Pages project trong Dashboard. Không cần thêm secret ở Phase 1.
+Pages build image dùng Node `22` và pnpm `11.9.0`, khớp `.nvmrc` và `packageManager`. Output `out` giữ nguyên. Cấu hình build có thể xác minh bằng Cloudflare Dashboard → Workers & Pages → `web-porfolio` → Settings → Builds & deployments. Không thêm Worker secrets hoặc D1 binding vào Pages; trình duyệt chỉ nhận HTML tĩnh.
 
-Chưa có deployment thực tế trong bước chuẩn bị này. Sau khi lưu Git integration và environment variables, Cloudflare sẽ build mỗi lần push; kiểm tra Build log và preview URL trong Dashboard trước khi gắn domain.
+Khi API-mode preview pass data parity, sitemap/metadata, direct refresh, 404 và responsive smoke test, có thể chuyển nhánh `main` từ `mock` sang `api` trong [scripts/cloudflare-pages-build.sh](scripts/cloudflare-pages-build.sh) rồi push commit để Pages chạy production deployment. Production không chuyển nguồn chỉ vì Worker đã deploy.
 
 ## Environment variables
 
-| Biến | Phase 1 | Mô tả |
+| Biến | Nơi cấu hình | Mô tả |
 | --- | --- | --- |
-| `NEXT_PUBLIC_DATA_SOURCE` | Required trên Pages (`mock` cho Phase 1) | Nguồn dữ liệu được chọn tại build; Pages build fail nếu biến thiếu hoặc không hợp lệ. |
-| `NEXT_PUBLIC_SITE_URL` | Required trên Pages | Origin dùng cho metadata, canonical và sitemap. |
-| `NEXT_PUBLIC_ROBOTS_INDEX` | Required trên Pages | `true` cho Production; `false` cho Preview để tránh index nội dung chưa phát hành. |
+| `NEXT_PUBLIC_DATA_SOURCE` | Do `scripts/cloudflare-pages-build.sh` đặt | `mock` trên main trong giai đoạn nghiệm thu API; `api` trên Preview. |
+| `NEXT_PUBLIC_API_BASE_URL` | Do build script đặt trên Preview | Worker `/api` URL dùng lúc Next.js generate static HTML. |
+| `NEXT_PUBLIC_SITE_URL` | Do build script đặt | Production domain trên main; `CF_PAGES_URL` trên Preview. |
+| `NEXT_PUBLIC_ROBOTS_INDEX` | Do build script đặt | `true` trên Production; `false` trên Preview. |
 | `NODE_VERSION` | `22` trong Pages build settings | Khớp `.nvmrc` để pin Node major cho build image. |
 | `PNPM_VERSION` | `11.9.0` trong Pages build settings | Đồng bộ pnpm của build image với `packageManager` trong `package.json`. |
-| `NEXT_PUBLIC_API_BASE_URL` | Không dùng với `mock` | Base URL adapter nếu chuyển API ở phase sau. |
+
+## Worker API và D1 (Phase 2)
+
+Backend mới nằm trong workspace `api/`; cấu hình Wrangler của Worker là `api/wrangler.toml`, còn `wrangler.toml` ở root vẫn thuộc Cloudflare Pages. Worker cung cấp public read API qua Hono và binding `DB` tới D1 `portfolio_db`. Không có route ghi dữ liệu public.
+
+Website tiếp tục dùng Static Export. Khi bật `NEXT_PUBLIC_DATA_SOURCE=api`, các Server Component gọi Worker trong lúc `pnpm run build` để tạo HTML, trang project/blog, metadata và sitemap. Trình duyệt nhận static assets nên không truy vấn D1 theo từng lượt xem.
+
+Chạy local theo thứ tự:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm db:migrate:local
+pnpm db:seed:local
+pnpm api:dev
+```
+
+Worker local chạy tại `http://127.0.0.1:8787`; API base URL là `http://127.0.0.1:8787/api`. Các migration, seed an toàn, endpoint và bước deploy/rollback được ghi trong [api/README.md](api/README.md).
+
+Production Pages tiếp tục dùng `NEXT_PUBLIC_DATA_SOURCE=mock` cho tới khi D1 remote đã migrate/seed, Worker production đã kiểm thử, API-mode static build và data parity pass, và Pages preview xác nhận SEO/routes. Không chuyển production chỉ vì Worker đã deploy.
 
 Tài liệu: [Next.js Static Exports](https://nextjs.org/docs/app/guides/static-exports), [Cloudflare Pages static Next.js deployment](https://developers.cloudflare.com/pages/framework-guides/nextjs/deploy-a-static-nextjs-site/), [Pages redirects](https://developers.cloudflare.com/pages/configuration/redirects/) và [Wrangler Pages configuration](https://developers.cloudflare.com/pages/functions/wrangler-configuration/).

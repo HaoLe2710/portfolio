@@ -1,0 +1,30 @@
+{
+  "name": "@portfolio/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --ip 127.0.0.1 --port 8787",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply portfolio_db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply portfolio_db --remote",
+    "db:seed:local": "tsx scripts/seed-initial.ts --local",
+    "db:seed:remote": "tsx scripts/seed-initial.ts --remote --confirm portfolio_db"
+  },
+  "dependencies": {
+    "hono": "^4.13.13",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.7",
+    "@cloudflare/workers-types": "^5.20261023.1",
+    "@types/node": "^20.19.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2",
+    "vitest": "^4.1.12",
+    "wrangler": "^4.151.3"
+  }
+}

@@ -11,6 +11,7 @@ const eslintConfig = defineConfig([
     ".next/**",
     ".gitnexus/**",
     ".wrangler/**",
+    "api/.wrangler/**",
     "playwright-report/**",
     "out/**",
     "build/**",

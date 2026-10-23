@@ -1,4 +1,5 @@
 export type PublicLinkResponse = {
+  id?: string | null;
   label: string;
   url: string;
   type?: string | null;
@@ -85,6 +86,7 @@ export type PublicCertificateResponse = {
   status?: string | null;
   issuedAt?: string | null;
   credentialUrl?: string | null;
+  official?: boolean | null;
   icon?: string | null;
   displayOrder?: number | null;
 };
@@ -141,6 +143,8 @@ export type PublicBlogPostDetailResponse = PublicBlogPostSummaryResponse & {
 
 export type PublicSiteSettingsResponse = {
   locale: string;
+  defaultLocale?: string | null;
+  supportedLocales?: string[] | null;
   siteName: string;
   authorName: string;
   defaultTitle?: string | null;
