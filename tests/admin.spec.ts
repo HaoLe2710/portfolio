@@ -90,6 +90,26 @@ test("admin sign-in submits same-origin credentials and opens the private worksp
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(successEnvelope({ id: "owner-test", email: "owner@example.test", role: "OWNER" })) });
       return;
     }
+    if (pathname === "/api/admin/releases" && request.method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(successEnvelope([{
+        id: "release-test",
+        environment: "staging",
+        number: 7,
+        status: "BUILDING",
+        operation: "PUBLISH",
+        entityType: "project",
+        entityId: "demo-project",
+        sourceRevisionId: "revision-test",
+        draftVersion: 2,
+        checksum: "a".repeat(64),
+        previousReleaseId: null,
+        deployment: { id: "pages-deployment-test", url: "https://release-test.web-porfolio.pages.dev", status: "BUILDING", attemptCount: 1 },
+        createdAt: "2026-10-23T00:00:00.000Z",
+        activatedAt: null,
+        error: null,
+      }])) });
+      return;
+    }
     if (pathname === "/api/admin/content/project/demo-draft") {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(successEnvelope({
         id: "demo-draft",
@@ -114,5 +134,12 @@ test("admin sign-in submits same-origin credentials and opens the private worksp
   await expect(page.getByRole("heading", { name: "leafy-test-project" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save draft" })).toBeVisible();
   await expect(page.getByText("owner@example.test")).toBeVisible();
+  await page.getByRole("button", { name: "Deployments" }).click();
+  await expect(page.getByRole("heading", { name: "Deployment history" })).toBeVisible();
+  await expect(page.getByText("Release #7")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Release progress: building" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Open verified Preview/ })).toHaveAttribute("target", "_blank");
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
   expect(await page.evaluate(() => localStorage.length)).toBe(0);
 });

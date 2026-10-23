@@ -1,4 +1,4 @@
-export type AdminErrorStatus = 400 | 401 | 403 | 404 | 409 | 429;
+export type AdminErrorStatus = 400 | 401 | 403 | 404 | 409 | 429 | 500 | 503;
 
 export class AdminError extends Error {
   constructor(

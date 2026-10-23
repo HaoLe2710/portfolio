@@ -16,6 +16,7 @@ import {
   type ContentSummary,
   type ContentType,
   type Dashboard,
+  type ContentRelease,
   type Revision,
   type Snapshot,
 } from "./admin-model";
@@ -130,7 +131,7 @@ function DashboardView({ dashboard, onOpen }: { dashboard: Dashboard; onOpen: (s
         <div>
           <span className={styles.eyebrow}>Content workspace</span>
           <h2>Keep your portfolio current.</h2>
-          <p>Changes stay in Draft until a future publish workflow is introduced.</p>
+          <p>Drafts stay private until an Owner publishes a verified release to the staging Preview.</p>
         </div>
         <div className={styles.welcomeStamp} aria-hidden="true">
           <span>Published</span><span className={styles.stampLine} /><strong>{totalPublished}</strong><span>items live</span>
@@ -297,6 +298,66 @@ function AuditView({ audit, state, onPage, page }: { audit: AuditPage | null; st
   );
 }
 
+function ReleaseCenterView({
+  releases,
+  state,
+  onRetry,
+  onRollback,
+}: {
+  releases: ContentRelease[] | null;
+  state: ListState;
+  onRetry: (release: ContentRelease) => void;
+  onRollback: (release: ContentRelease) => void;
+}) {
+  return (
+    <section className={styles.releaseCenter}>
+      <div className={styles.releaseIntro}>
+        <div><span className={styles.eyebrow}>Staging only</span><h2>Deployment history</h2>
+          <p>Content releases build isolated Cloudflare Pages Preview URLs. A release becomes live here only after verification.</p></div>
+        <span className={styles.stagingPill}><span />Preview environment</span>
+      </div>
+      {state === "loading" ? <div className={styles.loadingState} role="status"><span className={styles.spinner} />Loading releases…</div> : null}
+      {state === "error" ? <div className={styles.emptyState}><h3>Release history is unavailable</h3><p>Check your Owner permission and staging API connection.</p></div> : null}
+      {state === "ready" && !releases?.length ? <div className={styles.emptyState}><h3>No releases yet</h3><p>Publish a saved draft to create the first staging release.</p></div> : null}
+      {releases?.length ? <div className={styles.releaseList}>
+        {releases.map((release) => {
+          const stateLabel = release.status.replaceAll("_", " ").toLowerCase();
+          const canRetry = release.status === "FAILED" || release.status === "VERIFICATION_FAILED";
+          const canRollback = ["LIVE", "SUPERSEDED", "ROLLED_BACK"].includes(release.status);
+          return <article className={styles.releaseCard} key={release.id}>
+            <div className={styles.releaseCardTop}>
+              <div><span className={styles.releaseNumber}>Release #{release.number}</span><h3>{release.entityType} · {release.operation.toLowerCase()}</h3><small>{release.entityId} · Draft revision {release.draftVersion ?? "—"}</small></div>
+              <span className={`${styles.releaseState} ${release.status === "LIVE" ? styles.releaseStateLive : release.status.includes("FAILED") ? styles.releaseStateFailed : ""}`} aria-live="polite">{stateLabel}</span>
+            </div>
+            <ol className={styles.releaseProgress} aria-label={`Release progress: ${stateLabel}`}>
+              {["Prepared", "Building", "Verifying", "Live"].map((step) => {
+                  const current = ["LIVE", "SUPERSEDED", "ROLLED_BACK"].includes(release.status) ? 3
+                    : release.status === "VERIFYING" ? 2
+                      : ["BUILDING", "DEPLOYING", "CLONING", "INITIALIZING", "TRIGGERING", "UNKNOWN", "RECONCILIATION_REQUIRED"].includes(release.status) ? 1
+                        : ["FAILED", "CANCELED", "VERIFICATION_FAILED"].includes(release.status) ? -1 : 0;
+                  const index = ["Prepared", "Building", "Verifying", "Live"].indexOf(step);
+                  return <li className={index <= current ? styles.releaseStepDone : ""} aria-current={index === current ? "step" : undefined} key={step}>{step}</li>;
+              })}
+            </ol>
+            <dl className={styles.releaseFacts}>
+              <div><dt>Created</dt><dd>{formatTime(release.createdAt)}</dd></div>
+              <div><dt>Deployment</dt><dd>{release.deployment?.id ?? "Waiting for provider"}</dd></div>
+              <div><dt>Build state</dt><dd>{release.deployment?.status?.toLowerCase().replaceAll("_", " ") ?? "Queued"}</dd></div>
+            </dl>
+            <code className={styles.releaseChecksum}>SHA-256 {release.checksum}</code>
+            {release.deployment?.url ? <a className={styles.previewLink} href={release.deployment.url} target="_blank" rel="noreferrer">Open verified Preview <span aria-hidden="true">↗</span><span className="sr-only"> (opens in a new tab)</span></a> : null}
+            {release.error ? <p className={styles.releaseError} role="alert">{release.error.code}: {release.error.message}</p> : null}
+            <div className={styles.releaseActions}>
+              {canRetry ? <button className={styles.quietButton} onClick={() => onRetry(release)}>Retry deployment</button> : null}
+              {canRollback ? <button className={styles.quietButton} onClick={() => onRollback(release)}>Restore this content version</button> : null}
+            </div>
+          </article>;
+        })}
+      </div> : null}
+    </section>
+  );
+}
+
 export function AdminShell() {
   const [authState, setAuthState] = useState<"checking" | "signedOut" | "signedIn">("checking");
   const [user, setUser] = useState<AdminUser | null>(null);
@@ -315,6 +376,8 @@ export function AdminShell() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [revisions, setRevisions] = useState<Revision[] | null>(null);
   const [audit, setAudit] = useState<AuditPage | null>(null);
+  const [releases, setReleases] = useState<ContentRelease[] | null>(null);
+  const [releaseRefresh, setReleaseRefresh] = useState(0);
   const [accountOpen, setAccountOpen] = useState(false);
   const [passwordBusy, setPasswordBusy] = useState(false);
 
@@ -440,6 +503,19 @@ export function AdminShell() {
       });
       return;
     }
+    if (section === "releases") {
+      adminGet<ContentRelease[]>("/releases", { limit: 50 }).then((result) => {
+        setReleases(result);
+        setListState("ready");
+        if (result.some((item) => ["PENDING_DEPLOYMENT", "BUILDING", "VERIFYING", "RECONCILIATION_REQUIRED"].includes(item.status))) {
+          window.setTimeout(() => setReleaseRefresh((value) => value + 1), 5_000);
+        }
+      }).catch((error: unknown) => {
+        setListState("error");
+        showNotice("error", errorText(error));
+      });
+      return;
+    }
     if (!contentSections.has(section)) return;
     const type = section as ContentType;
     if (singletonSections.has(section)) {
@@ -474,7 +550,7 @@ export function AdminShell() {
       setListState("error");
       showNotice("error", errorText(error));
     });
-  }, [authState, section, selectedId, search, page, navigate, showNotice]);
+  }, [authState, section, selectedId, search, page, releaseRefresh, navigate, showNotice]);
 
   const selectSection = (next: AdminSection) => {
     if (singletonSections.has(next)) navigate(next, "primary");
@@ -513,7 +589,7 @@ export function AdminShell() {
   };
 
   const save = async () => {
-    if (!detail || !snapshot) return;
+    if (!detail || !snapshot) return null;
     try {
       const updated = await adminPut<AdminDetail, { expectedVersion: number; snapshot: Snapshot }>(
         `/content/${detail.type}/${encodeURIComponent(detail.id)}/draft`,
@@ -523,9 +599,69 @@ export function AdminShell() {
       setSnapshot(updated.snapshot);
       setInitialSnapshot(structuredClone(updated.snapshot));
       showNotice("success", "Draft saved. Published content is unchanged.");
+      return updated;
+    } catch (error) {
+      showNotice("error", errorText(error));
+      return null;
+    }
+  };
+
+  const publish = async () => {
+    if (!detail || !snapshot || user?.role !== "OWNER") return;
+    if (!window.confirm(`Publish ${detail.type} revision ${detail.version + (hasUnsavedChanges ? 1 : 0)} to the staging Preview?`)) return;
+    let candidate = detail;
+    if (hasUnsavedChanges) {
+      const saved = await save();
+      if (!saved) return;
+      candidate = saved;
+    }
+    try {
+      const release = await adminPost<ContentRelease, { expectedVersion: number; idempotencyKey: string }>(
+        `/content/${candidate.type}/${encodeURIComponent(candidate.id)}/publish`,
+        { expectedVersion: candidate.version, idempotencyKey: globalThis.crypto.randomUUID() }
+      );
+      showNotice("info", `Release #${release.number} is ${release.status.toLowerCase().replaceAll("_", " ")}.`);
+      unsavedRef.current = false;
+      setReleaseRefresh((value) => value + 1);
+      navigate("releases");
     } catch (error) {
       showNotice("error", errorText(error));
     }
+  };
+
+  const unpublish = async () => {
+    if (!detail || !detail.hasPublished || user?.role !== "OWNER") return;
+    if (!window.confirm("Remove this content from the next staging Preview build? Its historical release snapshots remain available.")) return;
+    try {
+      const release = await adminPost<ContentRelease, { idempotencyKey: string }>(
+        `/content/${detail.type}/${encodeURIComponent(detail.id)}/unpublish`,
+        { idempotencyKey: globalThis.crypto.randomUUID() }
+      );
+      showNotice("info", `Unpublish release #${release.number} is queued for verification.`);
+      navigate("releases");
+    } catch (error) {
+      showNotice("error", errorText(error));
+    }
+  };
+
+  const retryRelease = async (release: ContentRelease) => {
+    try {
+      await adminPost(`/releases/${encodeURIComponent(release.id)}/retry`, {});
+      showNotice("info", `Retry queued for release #${release.number}.`);
+      setReleaseRefresh((value) => value + 1);
+    } catch (error) { showNotice("error", errorText(error)); }
+  };
+
+  const rollbackRelease = async (release: ContentRelease) => {
+    if (!window.confirm(`Create a new staging release restoring ${release.entityType} from release #${release.number}?`)) return;
+    try {
+      const result = await adminPost<ContentRelease, { releaseId: string; idempotencyKey: string }>(
+        `/content/${release.entityType}/${encodeURIComponent(release.entityId)}/rollback`,
+        { releaseId: release.id, idempotencyKey: globalThis.crypto.randomUUID() }
+      );
+      showNotice("info", `Content rollback release #${result.number} is queued.`);
+      setReleaseRefresh((value) => value + 1);
+    } catch (error) { showNotice("error", errorText(error)); }
   };
 
   const cancelChanges = () => {
@@ -611,7 +747,7 @@ export function AdminShell() {
         </div>
         <div className={styles.navCaption}>Workspace</div>
         <nav className={styles.mainNav} aria-label="Admin modules">
-          {MODULES.map((item) => (
+          {MODULES.filter((item) => item.id !== "releases" || user?.role === "OWNER").map((item) => (
             <button
               key={item.id}
               className={`${styles.navItem} ${section === item.id ? styles.navActive : ""}`}
@@ -625,8 +761,8 @@ export function AdminShell() {
           ))}
         </nav>
         <div className={styles.sidebarFoot}>
-          <span className={styles.environmentDot} /> Draft workspace
-          <small>Publishing is planned for Phase 4.</small>
+          <span className={styles.environmentDot} /> Staging workspace
+          <small>Publish actions create verified Pages Preview releases.</small>
         </div>
       </aside>
 
@@ -680,6 +816,10 @@ export function AdminShell() {
             <AuditView audit={audit} state={listState} page={page} onPage={(next) => { setListState("loading"); setPage(next); }} />
           ) : null}
 
+          {section === "releases" ? (
+            <ReleaseCenterView releases={releases} state={listState} onRetry={(release) => void retryRelease(release)} onRollback={(release) => void rollbackRelease(release)} />
+          ) : null}
+
           {contentSections.has(section) && !isEditor && !singletonSections.has(section) ? (
             <ContentListView
               section={section as ContentType}
@@ -713,15 +853,17 @@ export function AdminShell() {
                   <button className={styles.quietButton} onClick={() => void openHistory()}><span className="material-symbols-outlined" aria-hidden="true">history</span>History</button>
                   {!singletonSections.has(section) ? <button className={styles.quietButton} disabled={hasUnsavedChanges} title={hasUnsavedChanges ? "Save or cancel edits before duplicating." : undefined} onClick={() => void duplicateItem({ id: detail.id, type: detail.type, title: String(detail.snapshot.title ?? "Copy"), slug: String(detail.snapshot.slug ?? ""), subtitle: "", status: detail.hasDraft ? "DRAFT" : "PUBLISHED", hasPublished: detail.hasPublished, version: detail.version, updatedAt: detail.updatedAt, revisionCount: revisions?.length ?? 0 })}><span className="material-symbols-outlined" aria-hidden="true">content_copy</span>Duplicate</button> : null}
                   {detail.hasDraft ? <button className={styles.dangerButton} onClick={() => void discard()}><span className="material-symbols-outlined" aria-hidden="true">delete</span>Discard draft</button> : null}
+                  {detail.hasPublished && user?.role === "OWNER" && !singletonSections.has(section) ? <button className={styles.dangerButton} onClick={() => void unpublish()} disabled={hasUnsavedChanges}><span className="material-symbols-outlined" aria-hidden="true">visibility_off</span>Unpublish from staging</button> : null}
                   {hasUnsavedChanges ? <button className={styles.quietButton} onClick={cancelChanges}>Cancel edits</button> : null}
                   <button className={styles.primaryButton} onClick={() => void save()} disabled={!hasUnsavedChanges}><span className="material-symbols-outlined" aria-hidden="true">save</span>Save draft</button>
+                  {detail.hasDraft && user?.role === "OWNER" ? <button className={styles.publishButton} onClick={() => void publish()} disabled={hasUnsavedChanges && listState === "loading"}><span className="material-symbols-outlined" aria-hidden="true">rocket_launch</span>Publish to staging</button> : null}
                 </div>
               </div>
               <aside className={styles.stateRail}>
                 <div><span className={styles.stateRailMark}>P</span><span><strong>Published</strong><small>{detail.hasPublished ? "Current live version is protected" : "No public version yet"}</small></span></div>
                 <span className={styles.railConnector} aria-hidden="true" />
                 <div><span className={`${styles.stateRailMark} ${styles.draftRailMark}`}>D</span><span><strong>Draft {detail.hasDraft ? `v${detail.version}` : "not saved"}</strong><small>Only visible in this private studio</small></span></div>
-                <span className={styles.noPublishNote}>Publish controls are planned for Phase 4.</span>
+                <span className={styles.noPublishNote}>Draft changes stay private until the staging Preview passes verification.</span>
               </aside>
               <SnapshotEditor snapshot={snapshot} onChange={setSnapshot} />
             </section>

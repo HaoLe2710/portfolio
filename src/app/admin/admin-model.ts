@@ -8,7 +8,7 @@ export type ContentType =
   | "contactLink"
   | "siteSettings";
 
-export type AdminSection = ContentType | "dashboard" | "auditLogs";
+export type AdminSection = ContentType | "dashboard" | "auditLogs" | "releases";
 export type Locale = "en" | "vi";
 export type Snapshot = Record<string, unknown>;
 
@@ -22,6 +22,7 @@ export const MODULES: Array<{ id: AdminSection; label: string; icon: string; sin
   { id: "certificate", label: "Certificates", icon: "verified" },
   { id: "contactLink", label: "Contact links", icon: "link" },
   { id: "siteSettings", label: "Site settings", icon: "tune", singleton: true },
+  { id: "releases", label: "Deployments", icon: "rocket_launch" },
   { id: "auditLogs", label: "Audit log", icon: "history" },
 ];
 
@@ -114,6 +115,24 @@ export type AuditPage = {
   page: number;
   pageSize: number;
   total: number;
+};
+
+export type ContentRelease = {
+  id: string;
+  environment: "staging" | "production";
+  number: number;
+  status: string;
+  operation: string;
+  entityType: ContentType;
+  entityId: string;
+  sourceRevisionId: string | null;
+  draftVersion: number | null;
+  checksum: string;
+  previousReleaseId: string | null;
+  deployment: null | { id: string; url: string | null; status: string; attemptCount: number };
+  createdAt: string;
+  activatedAt: string | null;
+  error: null | { code: string; message: string };
 };
 
 const emptyLocale = () => ({ en: "", vi: "" });

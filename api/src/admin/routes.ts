@@ -16,6 +16,7 @@ import {
 } from "./content";
 import { requireAdmin, requireOwner, currentAdmin, login, logout, changePassword } from "./auth";
 import { AdminError } from "./errors";
+import { getRelease, listReleases, publishDraft, rejectPagesRollback, retryRelease, rollbackContent, unpublishContent } from "./release-service";
 
 const router = new Hono<WorkerEnv>();
 
@@ -37,8 +38,25 @@ router.post("/auth/login", (context) => login(context));
 router.get("/me", (context) => currentAdmin(context));
 router.post("/auth/logout", (context) => logout(context));
 router.post("/auth/password", (context) => changePassword(context));
+router.get("/releases", async (context) => {
+  requireOwner(context);
+  return successResponse(context, await listReleases(context.env.DB, pagination(context.req.query("limit"), 30, 100)));
+});
+router.get("/releases/:id", async (context) => {
+  requireOwner(context);
+  return successResponse(context, await getRelease(context.env.DB, context.req.param("id")));
+});
+router.post("/releases/:id/retry", async (context) => {
+  requireOwner(context);
+  const result = await retryRelease(context, context.req.param("id"));
+  return successResponse(context, result, "Deployment retry queued.");
+});
+router.post("/deployments/:id/rollback", async (context) => {
+  requireOwner(context);
+  await rejectPagesRollback();
+});
 router.get("/dashboard", async (context) =>
-  successResponse(context, await getDashboard(context.env.DB))
+  successResponse(context, await getDashboard(context.env.DB, context.env.RELEASE_ENVIRONMENT))
 );
 
 router.get("/content/:type", async (context) => {
@@ -49,7 +67,7 @@ router.get("/content/:type", async (context) => {
     search: context.req.query("search") ?? "",
     page,
     pageSize,
-  }));
+  }, context.env.RELEASE_ENVIRONMENT));
 });
 
 router.post("/content/:type/drafts", async (context) => {
@@ -60,7 +78,7 @@ router.post("/content/:type/drafts", async (context) => {
 
 router.get("/content/:type/:id", async (context) => {
   const type = parseContentTypeParam(context.req.param("type"));
-  const detail = await getContentDetail(context.env.DB, type, context.req.param("id"));
+  const detail = await getContentDetail(context.env.DB, type, context.req.param("id"), context.env.RELEASE_ENVIRONMENT);
   return successResponse(context, detail);
 });
 
@@ -68,6 +86,27 @@ router.put("/content/:type/:id/draft", async (context) => {
   const type = parseContentTypeParam(context.req.param("type"));
   const detail = await saveDraft(context, type, context.req.param("id"), await context.req.json().catch(() => null));
   return successResponse(context, detail, "Draft saved.");
+});
+
+router.post("/content/:type/:id/publish", async (context) => {
+  requireOwner(context);
+  const type = parseContentTypeParam(context.req.param("type"));
+  const result = await publishDraft(context, type, context.req.param("id"), await context.req.json().catch(() => null));
+  return successResponse(context, result, "Release prepared for staging deployment.", 201);
+});
+
+router.post("/content/:type/:id/unpublish", async (context) => {
+  requireOwner(context);
+  const type = parseContentTypeParam(context.req.param("type"));
+  const result = await unpublishContent(context, type, context.req.param("id"), await context.req.json().catch(() => null));
+  return successResponse(context, result, "Unpublish release prepared for staging deployment.", 201);
+});
+
+router.post("/content/:type/:id/rollback", async (context) => {
+  requireOwner(context);
+  const type = parseContentTypeParam(context.req.param("type"));
+  const result = await rollbackContent(context, type, context.req.param("id"), await context.req.json().catch(() => null));
+  return successResponse(context, result, "Content rollback release prepared for staging deployment.", 201);
 });
 
 router.delete("/content/:type/:id/draft", async (context) => {
@@ -82,7 +121,7 @@ router.delete("/content/:type/:id/draft", async (context) => {
 
 router.get("/content/:type/:id/revisions", async (context) => {
   const type = parseContentTypeParam(context.req.param("type"));
-  return successResponse(context, await listRevisions(context.env.DB, type, context.req.param("id")));
+  return successResponse(context, await listRevisions(context.env.DB, type, context.req.param("id"), context.env.RELEASE_ENVIRONMENT));
 });
 
 router.post("/content/:type/:id/revisions/:revisionId/restore", async (context) => {

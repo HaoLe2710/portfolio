@@ -49,6 +49,22 @@ function localeParams(locale: Locale) {
   return { locale };
 }
 
+function releaseBuildHeaders(): Record<string, string> | undefined {
+  const releaseId = process.env.PORTFOLIO_RELEASE_ID?.trim();
+  const buildToken = process.env.PORTFOLIO_BUILD_TOKEN?.trim();
+  if (Boolean(releaseId) !== Boolean(buildToken)) {
+    throw new Error("Portfolio release builds require both PORTFOLIO_RELEASE_ID and PORTFOLIO_BUILD_TOKEN.");
+  }
+  if (!releaseId) return undefined;
+  if (process.env.CF_PAGES !== "1") {
+    throw new Error("Portfolio release snapshot access is only available during a Cloudflare Pages build.");
+  }
+  return {
+    "x-portfolio-release-id": releaseId,
+    "x-portfolio-build-token": buildToken!,
+  };
+}
+
 async function getNullableBySlug<T>(request: () => Promise<T>): Promise<T | null> {
   try {
     return await request();
@@ -65,7 +81,8 @@ export const apiPortfolioSource: PortfolioSource = {
   async getAchievements(locale) {
     const achievements = await publicGet<PublicAchievementResponse[]>(
       endpoints.achievements,
-      localeParams(locale)
+      localeParams(locale),
+      releaseBuildHeaders()
     );
 
     return mapPublicAchievements(achievements, locale);
@@ -75,7 +92,8 @@ export const apiPortfolioSource: PortfolioSource = {
     const blogPost = await getNullableBySlug(() =>
       publicGet<PublicBlogPostDetailResponse>(
         endpoints.blogPost(slug),
-        localeParams(locale)
+        localeParams(locale),
+        releaseBuildHeaders()
       )
     );
 
@@ -85,7 +103,8 @@ export const apiPortfolioSource: PortfolioSource = {
   async getBlogPosts(locale) {
     const blogPosts = await publicGet<PublicBlogPostSummaryResponse[]>(
       endpoints.blogPosts,
-      localeParams(locale)
+      localeParams(locale),
+      releaseBuildHeaders()
     );
 
     return mapPublicBlogSummaries(blogPosts, locale);
@@ -94,7 +113,8 @@ export const apiPortfolioSource: PortfolioSource = {
   async getCertificates(locale) {
     const certificates = await publicGet<PublicCertificateResponse[]>(
       endpoints.certificates,
-      localeParams(locale)
+      localeParams(locale),
+      releaseBuildHeaders()
     );
 
     return mapPublicCertificates(certificates, locale);
@@ -103,7 +123,8 @@ export const apiPortfolioSource: PortfolioSource = {
   async getContactLinks(locale) {
     const contactLinks = await publicGet<PublicContactLinkResponse[]>(
       endpoints.contactLinks,
-      localeParams(locale)
+      localeParams(locale),
+      releaseBuildHeaders()
     );
 
     return mapPublicContactLinks(contactLinks, locale);
@@ -151,7 +172,8 @@ export const apiPortfolioSource: PortfolioSource = {
   async getProfile(locale) {
     const profile = await publicGet<PublicProfileResponse>(
       endpoints.profile,
-      localeParams(locale)
+      localeParams(locale),
+      releaseBuildHeaders()
     );
 
     return mapPublicProfile(profile);
@@ -161,7 +183,8 @@ export const apiPortfolioSource: PortfolioSource = {
     const project = await getNullableBySlug(() =>
       publicGet<PublicProjectDetailResponse>(
         endpoints.project(slug),
-        localeParams(locale)
+        localeParams(locale),
+        releaseBuildHeaders()
       )
     );
 
@@ -171,7 +194,8 @@ export const apiPortfolioSource: PortfolioSource = {
   async getProjects(locale) {
     const projects = await publicGet<PublicProjectSummaryResponse[]>(
       endpoints.projects,
-      localeParams(locale)
+      localeParams(locale),
+      releaseBuildHeaders()
     );
 
     return mapPublicProjectSummaries(projects, locale);
@@ -180,7 +204,8 @@ export const apiPortfolioSource: PortfolioSource = {
   async getSiteSettings(locale) {
     const siteSettings = await publicGet<PublicSiteSettingsResponse>(
       endpoints.siteSettings,
-      localeParams(locale)
+      localeParams(locale),
+      releaseBuildHeaders()
     );
 
     return mapPublicSiteSettings(siteSettings);
@@ -189,7 +214,8 @@ export const apiPortfolioSource: PortfolioSource = {
   async getSkillGroups(locale) {
     const skillGroups = await publicGet<PublicSkillGroupResponse[]>(
       endpoints.skillGroups,
-      localeParams(locale)
+      localeParams(locale),
+      releaseBuildHeaders()
     );
 
     return mapPublicSkillGroups(skillGroups, locale);
@@ -201,7 +227,8 @@ export async function getPublicCvMediaAsset(
 ): Promise<PublicMediaAsset> {
   const mediaAsset = await publicGet<PublicMediaAssetResponse>(
     "/public/media-assets/cv",
-    localeParams(locale)
+    localeParams(locale),
+    releaseBuildHeaders()
   );
 
   return mapPublicMediaAsset(mediaAsset);

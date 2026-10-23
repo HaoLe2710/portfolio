@@ -2,11 +2,11 @@ import type { D1Database } from "@cloudflare/workers-types";
 import type { Context } from "hono";
 import type { WorkerEnv } from "../types/env";
 import { AdminError } from "./errors";
-import { parseContentType, type ContentType, validateSnapshot } from "./schemas";
+import { CONTENT_TYPES, parseContentType, type ContentType, validateSnapshot } from "./schemas";
 import { randomToken } from "./password";
 
 type Row = Record<string, unknown>;
-type PublishedSnapshot = { snapshot: Record<string, unknown>; baseRevision: string | null };
+type PublishedSnapshot = { snapshot: Record<string, unknown>; baseRevision: string | null; updatedAt?: string | null };
 
 const listSql: Record<ContentType, string> = {
   profile: "SELECT id FROM profile WHERE id = 'primary' AND status = 'PUBLISHED'",
@@ -329,7 +329,7 @@ async function getSiteSettings(database: D1Database): Promise<PublishedSnapshot 
   };
 }
 
-async function getPublished(database: D1Database, type: ContentType, id: string) {
+export async function getPublishedSnapshot(database: D1Database, type: ContentType, id: string) {
   switch (type) {
     case "profile": return id === "primary" ? getProfile(database) : null;
     case "skills": return getSkills(database, id);
@@ -340,6 +340,78 @@ async function getPublished(database: D1Database, type: ContentType, id: string)
     case "contactLink": return getContactLink(database, id);
     case "siteSettings": return id === "primary" ? getSiteSettings(database) : null;
   }
+}
+
+export async function listPublishedSnapshots(database: D1Database) {
+  const snapshots: Array<{
+    type: ContentType;
+    id: string;
+    snapshot: Record<string, unknown>;
+    baseRevision: string | null;
+  }> = [];
+
+  for (const type of CONTENT_TYPES) {
+    const ids = await all(database, listSql[type]);
+    for (const row of ids) {
+      const id = stringValue(row.id);
+      const published = await getPublishedSnapshot(database, type, id);
+      if (published) {
+        snapshots.push({ type, id, snapshot: published.snapshot, baseRevision: published.baseRevision });
+      }
+    }
+  }
+
+  return snapshots;
+}
+
+export async function currentPublishedSnapshot(
+  database: D1Database,
+  type: ContentType,
+  id: string,
+  environment?: "staging" | "production"
+): Promise<PublishedSnapshot | null> {
+  if (environment) {
+    const state = await one<{ live_release_id: string | null; activated_at: string | null }>(database,
+      `SELECT s.live_release_id, r.activated_at FROM release_environment_state s
+        LEFT JOIN content_releases r ON r.id = s.live_release_id WHERE s.environment = ?`, environment);
+    if (state?.live_release_id) {
+      const item = await one<{ operation: string; snapshot_json: string; snapshot_hash: string }>(database,
+        `SELECT operation, snapshot_json, snapshot_hash FROM content_release_items
+          WHERE release_id = ? AND entity_type = ? AND entity_id = ?`,
+        state.live_release_id, type, id);
+      if (!item || item.operation === "UNPUBLISH") return null;
+      return { snapshot: parseJsonObject(item.snapshot_json), baseRevision: item.snapshot_hash, updatedAt: state.activated_at };
+    }
+  }
+  return getPublishedSnapshot(database, type, id);
+}
+
+async function currentPublishedSnapshots(
+  database: D1Database,
+  type: ContentType,
+  environment?: "staging" | "production"
+) {
+  if (environment) {
+    const state = await one<{ live_release_id: string | null; activated_at: string | null }>(database,
+      `SELECT s.live_release_id, r.activated_at FROM release_environment_state s
+        LEFT JOIN content_releases r ON r.id = s.live_release_id WHERE s.environment = ?`, environment);
+    if (state?.live_release_id) {
+      const result = await database.prepare(
+        `SELECT entity_id, snapshot_json, snapshot_hash FROM content_release_items
+          WHERE release_id = ? AND entity_type = ? AND operation <> 'UNPUBLISH'
+          ORDER BY entity_id`
+      ).bind(state.live_release_id, type).all<{ entity_id: string; snapshot_json: string; snapshot_hash: string }>();
+      return (result.results ?? []).map((item) => ({
+        id: item.entity_id,
+        value: { snapshot: parseJsonObject(item.snapshot_json), baseRevision: item.snapshot_hash, updatedAt: state.activated_at },
+      }));
+    }
+  }
+  const rows = await all(database, listSql[type]);
+  return Promise.all(rows.map(async (row) => {
+    const id = stringValue(row.id);
+    return { id, value: await getPublishedSnapshot(database, type, id) };
+  }));
 }
 
 function draftSummary(type: ContentType, snapshot: Record<string, unknown>) {
@@ -369,12 +441,13 @@ function draftSummary(type: ContentType, snapshot: Record<string, unknown>) {
 export async function getContentDetail(
   database: D1Database,
   type: ContentType,
-  id: string
+  id: string,
+  environment?: "staging" | "production"
 ) {
   const draft = await one(database,
     "SELECT snapshot_json, version, base_revision, state, updated_at FROM admin_content_drafts WHERE entity_type = ? AND entity_id = ?",
     type, id);
-  const published = await getPublished(database, type, id);
+  const published = await currentPublishedSnapshot(database, type, id, environment);
   const hasPublished = Boolean(published);
   const isActiveDraft = draft?.state === "DRAFT";
   if (isActiveDraft && draft) {
@@ -400,7 +473,7 @@ export async function getContentDetail(
       hasPublished: true,
       hasDraft: false,
       state: "PUBLISHED" as const,
-      updatedAt: published.baseRevision,
+      updatedAt: published.updatedAt ?? published.baseRevision,
     };
   }
   if (draft) {
@@ -427,13 +500,10 @@ export async function getContentDetail(
 export async function listContent(
   database: D1Database,
   type: ContentType,
-  options: { search: string; page: number; pageSize: number }
+  options: { search: string; page: number; pageSize: number },
+  environment?: "staging" | "production"
 ) {
-  const publishedRows = await all(database, listSql[type]);
-  const published: Array<{ id: string; value: PublishedSnapshot | null }> = await Promise.all(publishedRows.map(async (row) => {
-    const id = stringValue(row.id);
-    return { id, value: await getPublished(database, type, id) };
-  }));
+  const published = await currentPublishedSnapshots(database, type, environment);
   const draftRows = await all(database,
     `SELECT entity_id, snapshot_json, version, state, updated_at FROM admin_content_drafts
      WHERE entity_type = ? AND state = 'DRAFT' ORDER BY updated_at DESC`, type);
@@ -453,7 +523,7 @@ export async function listContent(
       status: "PUBLISHED",
       hasPublished: true,
       version: 0,
-      updatedAt: item.value.baseRevision,
+      updatedAt: item.value.updatedAt ?? item.value.baseRevision,
       revisionCount: 0,
     });
   }
@@ -491,7 +561,41 @@ export async function listContent(
   };
 }
 
-export async function getDashboard(database: D1Database) {
+export async function getDashboard(database: D1Database, environment?: "staging" | "production") {
+  if (environment) {
+    const state = await one<{ live_release_id: string | null }>(database,
+      "SELECT live_release_id FROM release_environment_state WHERE environment = ?", environment);
+    if (state?.live_release_id) {
+      const [counts, drafts, recentAudit] = await Promise.all([
+        all(database,
+          `SELECT entity_type, COUNT(*) AS count FROM content_release_items
+            WHERE release_id = ? AND operation <> 'UNPUBLISH' GROUP BY entity_type`, state.live_release_id),
+        one<{ count: number }>(database, "SELECT COUNT(*) AS count FROM admin_content_drafts WHERE state = 'DRAFT'"),
+        all(database,
+          `SELECT l.id, l.action, l.entity_type, l.entity_id, l.created_at, u.email AS actor_email
+             FROM admin_audit_logs l LEFT JOIN admin_users u ON u.id = l.actor_id
+            ORDER BY l.created_at DESC LIMIT 8`),
+      ]);
+      const countByType = new Map(counts.map((row) => [stringValue(row.entity_type), Number(row.count ?? 0)]));
+      return {
+        published: {
+          profile: countByType.get("profile") ?? 0,
+          skills: countByType.get("skills") ?? 0,
+          projects: countByType.get("project") ?? 0,
+          blogPosts: countByType.get("blogPost") ?? 0,
+          achievements: countByType.get("achievement") ?? 0,
+          certificates: countByType.get("certificate") ?? 0,
+          contactLinks: countByType.get("contactLink") ?? 0,
+          siteSettings: countByType.get("siteSettings") ?? 0,
+        },
+        activeDrafts: Number(drafts?.count ?? 0),
+        recentActivity: recentAudit.map((row) => ({
+          id: stringValue(row.id), action: stringValue(row.action), entityType: stringValue(row.entity_type),
+          entityId: stringValue(row.entity_id), actorEmail: stringValue(row.actor_email), createdAt: stringValue(row.created_at),
+        })),
+      };
+    }
+  }
   const [profiles, skills, projects, blogPosts, achievements, certificates, contactLinks, settings, drafts, recentAudit] = await Promise.all([
     one<{ count: number }>(database, "SELECT COUNT(*) AS count FROM profile WHERE status = 'PUBLISHED'"),
     one<{ count: number }>(database, "SELECT COUNT(*) AS count FROM skill_groups WHERE status = 'PUBLISHED'"),
@@ -612,7 +716,7 @@ export async function createDraft(
   } catch {
     throw new AdminError(409, "CONFLICT", "A draft with the same identifier already exists.");
   }
-  return getContentDetail(database, type, id);
+  return getContentDetail(database, type, id, context.env.RELEASE_ENVIRONMENT);
 }
 
 export async function saveDraft(
@@ -646,7 +750,7 @@ export async function saveDraft(
   if (expectedVersion > 0 && (!current || Number(current.version) !== expectedVersion)) {
     throw new AdminError(409, "VERSION_CONFLICT", "This item changed in another tab. Reload before saving.");
   }
-  const published = await getPublished(database, type, id);
+  const published = await currentPublishedSnapshot(database, type, id, context.env.RELEASE_ENVIRONMENT);
   if (!current && !published) {
     throw new AdminError(404, "NOT_FOUND", "Content item not found.");
   }
@@ -688,7 +792,7 @@ export async function saveDraft(
     if (results[0]?.meta.changes !== 1) {
       throw new AdminError(409, "VERSION_CONFLICT", "This item changed in another tab. Reload before saving.");
     }
-    return await getContentDetail(database, type, id);
+    return await getContentDetail(database, type, id, context.env.RELEASE_ENVIRONMENT);
   } catch (error) {
     if (error instanceof AdminError) throw error;
     throw new AdminError(409, "VERSION_CONFLICT", "This item changed in another tab. Reload before saving.");
@@ -712,11 +816,11 @@ export async function discardDraft(context: Context<WorkerEnv>, type: ContentTyp
   return { discarded: true, version: expectedVersion + 1 };
 }
 
-export async function listRevisions(database: D1Database, type: ContentType, id: string) {
+export async function listRevisions(database: D1Database, type: ContentType, id: string, environment?: "staging" | "production") {
   const exists = await one(database,
     "SELECT entity_id FROM admin_content_drafts WHERE entity_type = ? AND entity_id = ?", type, id);
   if (!exists) {
-    const published = await getPublished(database, type, id);
+    const published = await currentPublishedSnapshot(database, type, id, environment);
     if (!published) throw new AdminError(404, "NOT_FOUND", "Content item not found.");
     return [];
   }
