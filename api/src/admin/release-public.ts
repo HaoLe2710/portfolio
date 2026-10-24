@@ -16,6 +16,20 @@ type PublicResource =
   | "profile" | "skills" | "achievements" | "certificates" | "projects"
   | "project" | "blogPosts" | "blogPost" | "contactLinks" | "siteSettings";
 
+function previewHostname(value: string) {
+  try {
+    const url = new URL(value.startsWith("https://") ? value : `https://${value}`);
+    if (url.protocol !== "https:" || url.username || url.password || url.port || url.search || url.hash ||
+        (url.pathname !== "" && url.pathname !== "/")) return null;
+    const hostname = url.hostname.toLowerCase();
+    return hostname !== "web-porfolio.pages.dev" && hostname.endsWith(".web-porfolio.pages.dev")
+      ? hostname
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function record(value: unknown): Snapshot {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Snapshot
@@ -348,4 +362,41 @@ export async function getLiveReleasePublicResponse(
   ).bind(expectedEnvironment).first<{ live_release_id: string | null }>();
   if (!state?.live_release_id) return null;
   return getReleasePublicResponse(database, state.live_release_id, expectedEnvironment, resource, locale, slug);
+}
+
+export async function resolveStagingReleaseBuild(
+  database: D1Database,
+  input: { branch: string; commitSha: string; previewUrl: string }
+) {
+  const requestedHost = previewHostname(input.previewUrl);
+  if (!requestedHost) return null;
+
+  const state = await database.prepare(
+    "SELECT active_release_id FROM release_environment_state WHERE environment = 'staging'"
+  ).first<{ active_release_id: string | null }>();
+  if (!state?.active_release_id) return null;
+
+  const job = await database.prepare(
+    `SELECT j.preview_url, r.id AS release_id, r.content_checksum
+       FROM deployment_jobs j
+       JOIN content_releases r ON r.id = j.release_id
+      WHERE j.environment = 'staging' AND j.pages_project = 'web-porfolio'
+        AND j.release_id = ? AND j.git_branch = ? AND j.commit_sha = ?
+        AND j.preview_url IS NOT NULL
+        AND j.status IN ('INITIALIZING', 'CLONING', 'BUILDING', 'DEPLOYING', 'VERIFYING', 'RECONCILIATION_REQUIRED')
+        AND r.status IN ('PENDING_DEPLOYMENT', 'BUILDING', 'VERIFYING', 'RECONCILIATION_REQUIRED')`
+  ).bind(state.active_release_id, input.branch, input.commitSha).first<{
+    preview_url: string;
+    release_id: string;
+    content_checksum: string;
+  }>();
+
+  if (!job || previewHostname(job.preview_url) !== requestedHost ||
+      !/^[0-9a-f]{64}$/.test(job.content_checksum) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(job.release_id)) return null;
+  return {
+    releaseId: job.release_id,
+    checksum: job.content_checksum,
+    commitSha: input.commitSha,
+  };
 }

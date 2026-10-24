@@ -36,6 +36,10 @@ export function assertPagesDeploymentConfigured(context: PagesApiConfiguration) 
   configuration(context);
 }
 
+export async function assertStagingPagesProject(context: PagesApiConfiguration) {
+  await verifyStagingProject(context);
+}
+
 export class PagesApiError extends Error {
   constructor(
     readonly status: number,
@@ -149,30 +153,6 @@ function branchMatches(pattern: string, branch: string) {
   if (!pattern.includes("*")) return pattern === branch;
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*");
   return new RegExp(`^${escaped}$`).test(branch);
-}
-
-export async function preparePagesReleaseBuild(
-  context: PagesApiConfiguration,
-  releaseId: string,
-  checksum: string
-) {
-  await verifyStagingProject(context);
-  const { accountId, project, branch, buildToken } = configuration(context);
-  await apiRequest<PagesProject>(context, projectPath(accountId, project), {
-    method: "PATCH",
-    body: JSON.stringify({
-      deployment_configs: {
-        preview: {
-          env_vars: {
-            PORTFOLIO_RELEASE_ID: { type: "plain_text", value: releaseId },
-            PORTFOLIO_RELEASE_CHECKSUM: { type: "plain_text", value: checksum },
-            PORTFOLIO_BUILD_TOKEN: { type: "secret_text", value: buildToken },
-          },
-        },
-      },
-    }),
-  });
-  return { branch, project, accountId };
 }
 
 export async function resolveGitBranchHead(

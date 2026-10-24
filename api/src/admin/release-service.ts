@@ -9,8 +9,8 @@ import {
   findPagesDeploymentForRelease,
   getPagesDeployment,
   PagesApiError,
+  assertStagingPagesProject,
   assertPagesDeploymentConfigured,
-  preparePagesReleaseBuild,
   resolveGitBranchHead,
   triggerPagesPreviewDeployment,
   type PagesDeployment,
@@ -762,9 +762,8 @@ export async function processDeploymentJob(env: WorkerEnv["Bindings"], jobId: st
         }
         await db.prepare("UPDATE deployment_jobs SET commit_sha = ?, updated_at = ? WHERE id = ?")
           .bind(branchHead, new Date().toISOString(), job.id).run();
-        const currentRelease = await db.prepare("SELECT content_checksum FROM content_releases WHERE id = ?")
-          .bind(release.id).first<{ content_checksum: string }>();
-        await preparePagesReleaseBuild(env, release.id, currentRelease?.content_checksum ?? release.content_checksum);
+        assertPagesDeploymentConfigured(env);
+        await assertStagingPagesProject(env);
         triggerMayHaveSucceeded = true;
         const deployment = await triggerPagesPreviewDeployment(env, job.git_branch, branchHead, requestMarker);
         await recordDeployment(env, job.id, deployment, branchHead);

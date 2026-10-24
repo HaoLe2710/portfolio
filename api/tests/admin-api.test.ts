@@ -539,6 +539,8 @@ describe("Release and Pages provider workflow", () => {
     const previewHost = "release-test.web-porfolio.pages.dev";
     let releaseId = "";
     let releaseChecksum = "";
+    let projectPreviewConfigPatches = 0;
+    let buildContextChecksCompleted = false;
     let requestMarker = "";
     let deploymentNumber = 0;
     let deploymentListCalls = 0;
@@ -555,11 +557,7 @@ describe("Release and Pages provider workflow", () => {
       }
       if (url.hostname === "api.cloudflare.com") {
         if (url.pathname.endsWith("/pages/projects/web-porfolio") && init?.method === "PATCH") {
-          const payload = JSON.parse(String(init.body)) as {
-            deployment_configs: { preview: { env_vars: Record<string, { value: string }> } };
-          };
-          releaseId = payload.deployment_configs.preview.env_vars.PORTFOLIO_RELEASE_ID!.value;
-          releaseChecksum = payload.deployment_configs.preview.env_vars.PORTFOLIO_RELEASE_CHECKSUM!.value;
+          projectPreviewConfigPatches += 1;
           return Response.json({ success: true, result: {
             name: "web-porfolio", source: { type: "github", config: { owner: "HaoLe2710", repo_name: "portfolio", production_branch: "main", preview_deployment_setting: "all" } },
           } });
@@ -601,6 +599,39 @@ describe("Release and Pages provider workflow", () => {
       }
       if (url.hostname === previewHost) {
         if (url.pathname === "/release-manifest.json") {
+          const buildContextUrl = new URL("https://worker.test/api/build/release-context");
+          buildContextUrl.searchParams.set("branch", "feat/phase4-publish-workflow");
+          buildContextUrl.searchParams.set("commitSha", commitSha);
+          buildContextUrl.searchParams.set("previewUrl", `https://${previewHost}`);
+          const buildContextRequest = (overrides: { branch?: string; commitSha?: string; previewUrl?: string } = {}, token = "phase4-build-token-test-only") => {
+            const candidate = new URL(buildContextUrl);
+            if (overrides.branch !== undefined) candidate.searchParams.set("branch", overrides.branch);
+            if (overrides.commitSha !== undefined) candidate.searchParams.set("commitSha", overrides.commitSha);
+            if (overrides.previewUrl !== undefined) candidate.searchParams.set("previewUrl", overrides.previewUrl);
+            return app.request(candidate, { headers: { "x-portfolio-build-token": token } }, bindings);
+          };
+          const buildContextResponse = await buildContextRequest();
+          expect(buildContextResponse.status).toBe(200);
+          const buildContextBody = await buildContextResponse.json() as {
+            success: boolean;
+            data: { releaseId: string; checksum: string; commitSha: string };
+          };
+          releaseId = buildContextBody.data.releaseId;
+          releaseChecksum = buildContextBody.data.checksum;
+
+          if (!buildContextChecksCompleted) {
+            expect((await buildContextRequest({}, "wrong-build-token")).status).toBe(401);
+            expect((await buildContextRequest({ branch: "another-preview-branch" })).status).toBe(204);
+            expect((await buildContextRequest({ commitSha: "b".repeat(40) })).status).toBe(404);
+            expect((await buildContextRequest({ previewUrl: "https://other-release.web-porfolio.pages.dev" })).status).toBe(404);
+            const configuredEnvironment = bindings.RELEASE_ENVIRONMENT;
+            bindings.RELEASE_ENVIRONMENT = "production";
+            expect((await buildContextRequest()).status).toBe(403);
+            bindings.RELEASE_ENVIRONMENT = configuredEnvironment;
+            const concurrentContexts = await Promise.all([buildContextRequest(), buildContextRequest()]);
+            expect(concurrentContexts.map((response) => response.status)).toEqual([200, 200]);
+            buildContextChecksCompleted = true;
+          }
           return Response.json({ releaseId, checksum: releaseChecksum, commitSha });
         }
         if (url.pathname === "/api/admin/me") {
@@ -652,6 +683,8 @@ describe("Release and Pages provider workflow", () => {
       expect(storedRelease?.content_checksum).toBe(release.checksum);
       expect(releaseId).toBe(release.id);
       expect(releaseChecksum).toBe(release.checksum);
+      expect(projectPreviewConfigPatches).toBe(0);
+      expect(buildContextChecksCompleted).toBe(true);
       expect(requestMarker).toBe(`portfolio-release:${release.id}:attempt:1`);
       const liveState = await env.DB.prepare("SELECT live_release_id, active_release_id FROM release_environment_state WHERE environment = 'staging'")
         .first<{ live_release_id: string | null; active_release_id: string | null }>();
@@ -710,6 +743,13 @@ describe("Release and Pages provider workflow", () => {
       const restoredPublic = await request("/api/public/projects?locale=en", {}, "");
       expect(restoredPublic.status).toBe(200);
       expect(await restoredPublic.text()).toContain("Phase Four Release Integration Test");
+      const expiredBuildContext = new URL("https://worker.test/api/build/release-context");
+      expiredBuildContext.searchParams.set("branch", "feat/phase4-publish-workflow");
+      expiredBuildContext.searchParams.set("commitSha", commitSha);
+      expiredBuildContext.searchParams.set("previewUrl", `https://${previewHost}`);
+      expect((await app.request(expiredBuildContext, {
+        headers: { "x-portfolio-build-token": "phase4-build-token-test-only" },
+      }, bindings)).status).toBe(404);
     } finally {
       vi.unstubAllGlobals();
       bindings.CLOUDFLARE_ACCOUNT_ID = undefined;

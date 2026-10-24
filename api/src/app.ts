@@ -19,7 +19,7 @@ import { parseLocale, parseSlug } from "./validators/public-query";
 import type { WorkerEnv } from "./types/env";
 import adminRoutes from "./admin/routes";
 import { AdminError } from "./admin/errors";
-import { getLiveReleasePublicResponse, getReleasePublicResponse } from "./admin/release-public";
+import { getLiveReleasePublicResponse, getReleasePublicResponse, resolveStagingReleaseBuild } from "./admin/release-public";
 import { reconcileDeploymentJobs } from "./admin/release-service";
 
 const app = new Hono<WorkerEnv>();
@@ -102,6 +102,40 @@ app.get("/healthz", async (context) => {
   }
 
   return successResponse(context, { status: "ok", database: "ok" });
+});
+
+app.get("/api/build/release-context", async (context) => {
+  const suppliedToken = context.req.header("x-portfolio-build-token") ?? "";
+  const configuredToken = context.env.PAGES_BUILD_TOKEN ?? "";
+  if (!configuredToken || !suppliedToken || !constantTimeEqual(suppliedToken, configuredToken)) {
+    throw new AdminError(401, "UNAUTHORIZED", "Build release authentication failed.");
+  }
+  if (context.env.RELEASE_ENVIRONMENT !== "staging") {
+    throw new AdminError(403, "STAGING_ONLY", "Release build resolution is available only in staging.");
+  }
+
+  const branch = context.req.query("branch") ?? "";
+  const commitSha = context.req.query("commitSha")?.toLowerCase() ?? "";
+  const previewUrl = context.req.query("previewUrl") ?? "";
+  if (!branch) {
+    throw new AdminError(404, "RELEASE_BUILD_NOT_FOUND", "No staging release is assigned to this Pages deployment.");
+  }
+  if (branch !== context.env.PAGES_STAGING_BRANCH) {
+    const response = new Response(null, { status: 204, headers: { "Cache-Control": "no-store, private" } });
+    return response;
+  }
+  if (!/^[0-9a-f]{40}$/.test(commitSha) || !previewUrl) {
+    throw new AdminError(400, "INVALID_RELEASE_BUILD_IDENTITY", "The Pages deployment identity is invalid.");
+  }
+
+  const build = await resolveStagingReleaseBuild(context.env.DB, { branch, commitSha, previewUrl });
+  if (!build) {
+    throw new AdminError(404, "RELEASE_BUILD_NOT_FOUND", "No staging release is assigned to this Pages deployment.");
+  }
+
+  const response = successResponse(context, build);
+  response.headers.set("Cache-Control", "no-store, private");
+  return response;
 });
 
 app.get("/api/public/profile", async (context) => {
