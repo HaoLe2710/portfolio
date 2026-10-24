@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { applyD1Migrations } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { mockPortfolio } from "../../src/data/mock-portfolio";
 import app from "../src/app";
 import { buildSeedSql } from "../src/seed-data";
@@ -13,14 +13,19 @@ import {
   verifyPassword,
 } from "../src/admin/password";
 import { BLOCK_TYPES, validateSnapshot } from "../src/admin/schemas";
+import { listPublishedSnapshots } from "../src/admin/content";
+import { processDeploymentJob } from "../src/admin/release-service";
 import adminSchemaSql from "../migrations/0002_admin_cms.sql?raw";
 import passwordSchemaSql from "../migrations/0003_argon2id_auth.sql?raw";
+import releaseSchemaSql from "../migrations/0004_content_release_workflow.sql?raw";
 import schemaSql from "../migrations/0001_init_schema.sql?raw";
 import type { WorkerBindings } from "../src/types/env";
 
 const bindings: WorkerBindings = {
   DB: env.DB,
   CORS_ALLOWED_ORIGINS: "https://worker.test",
+  RELEASE_ENVIRONMENT: "staging",
+  PAGES_BUILD_TOKEN: "phase4-build-token-test-only",
 };
 const ownerId = "phase3-test-owner";
 const ownerEmail = "phase3-owner@example.invalid";
@@ -32,12 +37,18 @@ function cookieToken(cookie: string) {
   return decodeURIComponent(value.slice(value.indexOf("=") + 1));
 }
 
-async function request(path: string, init: RequestInit = {}, cookie = sessionCookie, origin = "https://worker.test") {
+async function request(
+  path: string,
+  init: RequestInit = {},
+  cookie = sessionCookie,
+  origin = "https://worker.test",
+  executionCtx?: Parameters<typeof app.fetch>[2]
+) {
   const headers = new Headers(init.headers);
   headers.set("Origin", origin);
   if (cookie) headers.set("Cookie", cookie);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  return app.request(`https://worker.test${path}`, { ...init, headers }, bindings);
+  return app.request(`https://worker.test${path}`, { ...init, headers }, bindings, executionCtx);
 }
 
 async function parse<T>(response: Response) {
@@ -68,6 +79,7 @@ beforeAll(async () => {
     { name: "0001_init_schema", queries: schemaSql.split(";").map((s) => s.trim()).filter(Boolean) },
     { name: "0002_admin_cms", queries: adminSchemaSql.split(";").map((s) => s.trim()).filter(Boolean) },
     { name: "0003_argon2id_auth", queries: passwordSchemaSql.split(";").map((s) => s.trim()).filter(Boolean) },
+    { name: "0004_content_release_workflow", queries: releaseSchemaSql.split(";").map((s) => s.trim()).filter(Boolean) },
   ]);
   for (const statement of buildSeedSql("phase3-admin-tests").statements) {
     await env.DB.prepare(statement).run();
@@ -320,4 +332,441 @@ describe("Draft revisions and Published isolation", () => {
     });
     expect(collidingSlug.status).toBe(409);
   });
+});
+
+describe("Staging release authorization and configuration gates", () => {
+  it("requires an authenticated Owner for publishing", async () => {
+    const unauthorized = await request("/api/admin/content/profile/primary/publish", {
+      method: "POST",
+      body: JSON.stringify({ expectedVersion: 1, idempotencyKey: "phase4-owner-required-001" }),
+    }, "");
+    expect(unauthorized.status).toBe(401);
+  });
+
+  it("fails closed before writing a release when Pages secrets are not configured", async () => {
+    const detailResponse = await request("/api/admin/content/profile/primary");
+    expect(detailResponse.status).toBe(200);
+    const detail = (await parse<{ version: number }>(detailResponse)).data!;
+    const blocked = await request("/api/admin/content/profile/primary/publish", {
+      method: "POST",
+      body: JSON.stringify({ expectedVersion: detail.version, idempotencyKey: "phase4-config-missing-001" }),
+    });
+    expect(blocked.status).toBe(503);
+    expect((await parse(blocked)).error?.code).toBe("PAGES_DEPLOYMENT_NOT_CONFIGURED");
+    const releaseCount = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM content_releases WHERE operation IN ('PUBLISH', 'UPDATE')"
+    ).first<{ count: number }>();
+    expect(Number(releaseCount?.count ?? 0)).toBe(0);
+    const state = await env.DB.prepare(
+      "SELECT active_release_id FROM release_environment_state WHERE environment = 'staging'"
+    ).first<{ active_release_id: string | null }>();
+    expect(state?.active_release_id).toBeNull();
+  });
+
+  it("prevents unpublishing singleton site identity", async () => {
+    const response = await request("/api/admin/content/profile/primary/unpublish", {
+      method: "POST",
+      body: JSON.stringify({ idempotencyKey: "phase4-profile-unpublish-001" }),
+    });
+    expect(response.status).toBe(400);
+    expect((await parse(response)).error?.code).toBe("SINGLETON_UNPUBLISH_BLOCKED");
+  });
+});
+
+describe("Release-pinned public build data", () => {
+  const releaseId = "phase4-release-public-test";
+  const privateDraftId = "phase4-private-draft-test";
+  let projectId = "";
+  let projectSlug = "";
+
+  beforeAll(async () => {
+    const published = await listPublishedSnapshots(env.DB);
+    const project = published.find((item) => item.type === "project");
+    expect(project).toBeDefined();
+    projectId = project!.id;
+    projectSlug = String(project!.snapshot.slug);
+    const changed = structuredClone(project!.snapshot);
+    changed.title = { en: "Phase Four Frozen Release", vi: "Bản phát hành đóng băng Phase Four" };
+    await env.DB.prepare(
+      `INSERT INTO content_releases
+       (id, environment, release_number, status, operation, entity_type, entity_id, actor_id, content_checksum, created_at)
+       VALUES (?, 'staging', 9001, 'BUILDING', 'UPDATE', 'project', ?, ?, ?, ?)`
+    ).bind(releaseId, projectId, ownerId, "phase4-release-checksum", new Date().toISOString()).run();
+
+    const statements = published.map((item) => {
+      const isTarget = item.type === "project" && item.id === projectId;
+      const snapshot = isTarget ? changed : item.snapshot;
+      return env.DB.prepare(
+        `INSERT INTO content_release_items
+         (release_id, entity_type, entity_id, operation, snapshot_json, snapshot_hash)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(releaseId, item.type, item.id, isTarget ? "UPDATE" : "SNAPSHOT", JSON.stringify(snapshot), "unit-test-hash");
+    });
+    if (statements.length) await env.DB.batch(statements);
+    await env.DB.prepare(
+      `INSERT INTO admin_content_drafts
+       (entity_type, entity_id, snapshot_json, version, state, author_id)
+       VALUES ('project', ?, ?, 1, 'DRAFT', ?)`
+    ).bind(privateDraftId, JSON.stringify({
+      id: privateDraftId,
+      slug: "phase-four-private-draft-test",
+      title: { en: "phase4-private-draft-marker", vi: "phase4-private-draft-marker" },
+    }), ownerId).run();
+  });
+
+  it("requires a build token and serves the pinned bilingual release without exposing Drafts", async () => {
+    const missingToken = await request(`/api/public/projects?locale=en`, {
+      headers: { "x-portfolio-release-id": releaseId },
+    }, "");
+    expect(missingToken.status).toBe(401);
+
+    const pinned = await request("/api/public/projects?locale=en", {
+      headers: {
+        "x-portfolio-release-id": releaseId,
+        "x-portfolio-build-token": "phase4-build-token-test-only",
+      },
+    }, "");
+    expect(pinned.status).toBe(200);
+    const pinnedBody = await pinned.text();
+    expect(pinnedBody).toContain("Phase Four Frozen Release");
+    expect(pinnedBody).not.toContain("phase4-private-draft-marker");
+
+    const vi = await request(`/api/public/projects/${projectSlug}?locale=vi`, {
+      headers: {
+        "x-portfolio-release-id": releaseId,
+        "x-portfolio-build-token": "phase4-build-token-test-only",
+      },
+    }, "");
+    expect(vi.status).toBe(200);
+    expect(await vi.text()).toContain("Bản phát hành đóng băng Phase Four");
+
+    const canonical = await request("/api/public/projects?locale=en", {}, "");
+    expect(canonical.status).toBe(200);
+    expect(await canonical.text()).not.toContain("Phase Four Frozen Release");
+  });
+
+  it("does not expose an unpublished item from a release snapshot", async () => {
+    await env.DB.prepare(
+      `UPDATE content_release_items SET operation = 'UNPUBLISH'
+       WHERE release_id = ? AND entity_type = 'project' AND entity_id = ?`
+    ).bind(releaseId, projectId).run();
+    const detail = await request(`/api/public/projects/${projectSlug}?locale=en`, {
+      headers: {
+        "x-portfolio-release-id": releaseId,
+        "x-portfolio-build-token": "phase4-build-token-test-only",
+      },
+    }, "");
+    expect(detail.status).toBe(404);
+  });
+
+  it("serves the selected LIVE release to public and admin reads", async () => {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE content_releases SET status = 'LIVE', activated_at = ? WHERE id = ?")
+        .bind(new Date().toISOString(), releaseId),
+      env.DB.prepare("UPDATE content_release_items SET operation = 'UPDATE' WHERE release_id = ? AND entity_type = 'project' AND entity_id = ?")
+        .bind(releaseId, projectId),
+      env.DB.prepare("UPDATE release_environment_state SET live_release_id = ? WHERE environment = 'staging'")
+        .bind(releaseId),
+    ]);
+    try {
+      const publicResponse = await request("/api/public/projects?locale=en", {}, "");
+      expect(publicResponse.status).toBe(200);
+      expect(await publicResponse.text()).toContain("Phase Four Frozen Release");
+      const adminResponse = await request(`/api/admin/content/project/${projectId}`);
+      expect(adminResponse.status).toBe(200);
+      const detail = (await parse<{ snapshot: { title: { en: string } } }>(adminResponse)).data!;
+      expect(detail.snapshot.title.en).toBe("Phase Four Frozen Release");
+    } finally {
+      await env.DB.prepare("UPDATE release_environment_state SET live_release_id = NULL WHERE environment = 'staging'").run();
+      await env.DB.prepare("UPDATE content_releases SET status = 'BUILDING', activated_at = NULL WHERE id = ?").bind(releaseId).run();
+      await env.DB.prepare("UPDATE content_release_items SET operation = 'UNPUBLISH' WHERE release_id = ? AND entity_type = 'project' AND entity_id = ?")
+        .bind(releaseId, projectId).run();
+    }
+  });
+});
+
+describe("Release and Pages provider workflow", () => {
+  it("creates one pinned release and activates it only after Pages verification", async () => {
+    const sourceResponse = await request(`/api/admin/content/project/${mockPortfolio.projects[0]!.id}`);
+    expect(sourceResponse.status).toBe(200);
+    const source = (await parse<{ snapshot: Record<string, unknown> }>(sourceResponse)).data!.snapshot;
+    const uniqueSuffix = crypto.randomUUID().slice(0, 8);
+    const draftResponse = await request("/api/admin/content/project/drafts", {
+      method: "POST",
+      body: JSON.stringify({
+        ...source,
+        slug: `phase-four-release-${uniqueSuffix}`,
+        title: { en: "Phase Four Release Integration Test", vi: "Kiểm thử tích hợp phát hành Phase Four" },
+      }),
+    });
+    expect(draftResponse.status).toBe(201);
+    const draft = (await parse<{ id: string; version: number; snapshot: Record<string, unknown> }>(draftResponse)).data!;
+    const expectedDetailText: string[] = [];
+    const expectedHomeText: string[] = [];
+    for (const item of await listPublishedSnapshots(env.DB)) {
+      const localized = (value: unknown) => {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+        const pair = value as { en?: unknown; vi?: unknown };
+        if (typeof pair.en === "string") expectedHomeText.push(pair.en);
+        if (typeof pair.vi === "string") expectedHomeText.push(pair.vi);
+      };
+      if (item.type === "profile") expectedHomeText.push(String(item.snapshot.fullName ?? ""));
+      if (item.type === "skills") localized(item.snapshot.name);
+      if (item.type === "achievement" || item.type === "certificate") localized(item.snapshot.title);
+      if (item.type === "contactLink") localized(item.snapshot.label);
+      if (item.type !== "project" && item.type !== "blogPost") continue;
+      const title = item.snapshot.title as { en?: string; vi?: string } | undefined;
+      if (title?.en) expectedDetailText.push(title.en);
+      if (title?.vi) expectedDetailText.push(title.vi);
+      if (item.type === "project" && Array.isArray(item.snapshot.contentBlocks)) {
+        for (const block of item.snapshot.contentBlocks as Array<{ title?: { en?: string; vi?: string } }>) {
+          if (block.title?.en) expectedDetailText.push(block.title.en);
+          if (block.title?.vi) expectedDetailText.push(block.title.vi);
+        }
+      }
+    }
+    expectedDetailText.push("Phase Four Release Integration Test", "Kiểm thử tích hợp phát hành Phase Four");
+
+    Object.assign(bindings, {
+      CLOUDFLARE_ACCOUNT_ID: "unit-account-id",
+      PAGES_PROJECT_NAME: "web-porfolio",
+      PAGES_STAGING_BRANCH: "feat/phase4-publish-workflow",
+      GITHUB_REPOSITORY: "HaoLe2710/portfolio",
+      CLOUDFLARE_API_TOKEN: "unit-pages-token",
+      PAGES_BUILD_TOKEN: "phase4-build-token-test-only",
+    });
+    const commitSha = "a".repeat(40);
+    const previewHost = "release-test.web-porfolio.pages.dev";
+    let releaseId = "";
+    let releaseChecksum = "";
+    let projectPreviewConfigPatches = 0;
+    let buildContextChecksCompleted = false;
+    let requestMarker = "";
+    let deploymentNumber = 0;
+    let deploymentListCalls = 0;
+    let releaseListBarrier!: () => void;
+    const releaseListReads = new Promise<void>((resolve) => { releaseListBarrier = resolve; });
+    const deployments = new Map<string, Record<string, unknown>>();
+    const releaseIds: string[] = [];
+    let expectedUnpublishedSlug = "";
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.hostname === "api.github.com") {
+        return Response.json({ commit: { sha: commitSha } });
+      }
+      if (url.hostname === "api.cloudflare.com") {
+        if (url.pathname.endsWith("/pages/projects/web-porfolio") && init?.method === "PATCH") {
+          projectPreviewConfigPatches += 1;
+          return Response.json({ success: true, result: {
+            name: "web-porfolio", source: { type: "github", config: { owner: "HaoLe2710", repo_name: "portfolio", production_branch: "main", preview_deployment_setting: "all" } },
+          } });
+        }
+        if (url.pathname.endsWith("/pages/projects/web-porfolio") && init?.method !== "PATCH") {
+          return Response.json({ success: true, result: {
+            name: "web-porfolio", source: { type: "github", config: { owner: "HaoLe2710", repo_name: "portfolio", production_branch: "main", preview_deployment_setting: "all" } },
+          } });
+        }
+        if (url.pathname.endsWith("/deployments") && (!init?.method || init.method === "GET")) {
+          deploymentListCalls++;
+          if (deploymentListCalls === 2) releaseListBarrier();
+          await releaseListReads;
+          return Response.json({ success: true, result: [...deployments.values()] });
+        }
+        if (url.pathname.endsWith("/deployments") && init?.method === "POST") {
+          const form = init.body as FormData;
+          requestMarker = String(form.get("commit_message"));
+          const id = `phase4-pages-deployment-${++deploymentNumber}`;
+          const nextDeployment = {
+            id,
+            url: `https://${previewHost}`,
+            environment: "preview",
+            project_name: "web-porfolio",
+            deployment_trigger: { metadata: {
+              branch: String(form.get("branch")), commit_hash: String(form.get("commit_hash")), commit_message: requestMarker,
+            } },
+            latest_stage: { name: "deploy", status: "success" },
+            uses_functions: true,
+          };
+          deployments.set(id, nextDeployment);
+          return Response.json({ success: true, result: nextDeployment });
+        }
+        if (url.pathname.includes("/deployments/")) {
+          const id = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
+          return Response.json({ success: true, result: deployments.get(id) ?? null });
+        }
+        return Response.json({ success: false, errors: [{ code: 500, message: "Unexpected fake Pages API call." }] }, { status: 500 });
+      }
+      if (url.hostname === previewHost) {
+        if (url.pathname === "/release-manifest.json") {
+          const buildContextUrl = new URL("https://worker.test/api/build/release-context");
+          buildContextUrl.searchParams.set("branch", "feat/phase4-publish-workflow");
+          buildContextUrl.searchParams.set("commitSha", commitSha);
+          buildContextUrl.searchParams.set("previewUrl", `https://${previewHost}`);
+          const buildContextRequest = (overrides: { branch?: string; commitSha?: string; previewUrl?: string } = {}, token = "phase4-build-token-test-only") => {
+            const candidate = new URL(buildContextUrl);
+            if (overrides.branch !== undefined) candidate.searchParams.set("branch", overrides.branch);
+            if (overrides.commitSha !== undefined) candidate.searchParams.set("commitSha", overrides.commitSha);
+            if (overrides.previewUrl !== undefined) candidate.searchParams.set("previewUrl", overrides.previewUrl);
+            return app.request(candidate, { headers: { "x-portfolio-build-token": token } }, bindings);
+          };
+          const buildContextResponse = await buildContextRequest();
+          expect(buildContextResponse.status).toBe(200);
+          const buildContextBody = await buildContextResponse.json() as {
+            success: boolean;
+            data: { releaseId: string; checksum: string; commitSha: string };
+          };
+          releaseId = buildContextBody.data.releaseId;
+          releaseChecksum = buildContextBody.data.checksum;
+
+          if (!buildContextChecksCompleted) {
+            expect((await buildContextRequest({}, "wrong-build-token")).status).toBe(401);
+            expect((await buildContextRequest({ branch: "another-preview-branch" })).status).toBe(204);
+            expect((await buildContextRequest({ commitSha: "b".repeat(40) })).status).toBe(404);
+            expect((await buildContextRequest({ previewUrl: "https://other-release.web-porfolio.pages.dev" })).status).toBe(404);
+            const configuredEnvironment = bindings.RELEASE_ENVIRONMENT;
+            bindings.RELEASE_ENVIRONMENT = "production";
+            expect((await buildContextRequest()).status).toBe(403);
+            bindings.RELEASE_ENVIRONMENT = configuredEnvironment;
+            const concurrentContexts = await Promise.all([buildContextRequest(), buildContextRequest()]);
+            expect(concurrentContexts.map((response) => response.status)).toEqual([200, 200]);
+            buildContextChecksCompleted = true;
+          }
+          return Response.json({ releaseId, checksum: releaseChecksum, commitSha });
+        }
+        if (url.pathname === "/api/admin/me") {
+          return Response.json({ success: false, error: { code: "UNAUTHORIZED" } }, { status: 401 });
+        }
+        if (url.pathname === "/robots.txt") return new Response("User-agent: *\nAllow: /\nDisallow: /admin\n", { status: 200 });
+        if (url.pathname === "/sitemap.xml") return new Response("<urlset></urlset>", { status: 200 });
+        if (expectedUnpublishedSlug && url.pathname.endsWith(`/projects/${expectedUnpublishedSlug}`)) {
+          return new Response("Not found", { status: 404 });
+        }
+        if (url.pathname === "/en" || url.pathname === "/vi") {
+          const locale = url.pathname.slice(1);
+          return new Response(`<html><head><meta name="robots" content="noindex, follow"><link rel="canonical" href="https://${previewHost}/${locale}"><link rel="alternate" hreflang="en" href="https://${previewHost}/en"><link rel="alternate" hreflang="vi" href="https://${previewHost}/vi"></head><body>${expectedHomeText.join(" ")}</body><link rel="stylesheet" href="/_next/static/css/test.css"><script src="/_next/static/chunks/test.js"></script></html>`, { status: 200 });
+        }
+        if (url.pathname.startsWith("/_next/static/")) return new Response("asset", { status: 200 });
+        if (url.pathname.includes("/projects/") || url.pathname.includes("/blog/")) {
+          return new Response(`<html><body>${expectedDetailText.join(" ")}</body></html>`, { status: 200 });
+        }
+        return new Response("Static detail page", { status: 200 });
+      }
+      return originalFetch(input, init);
+    }));
+
+    let background: Promise<unknown>[] = [];
+    const executionCtx = {
+      waitUntil(promise: Promise<unknown>) { background.push(promise); },
+      passThroughOnException() {},
+    } as Parameters<typeof app.fetch>[2];
+    try {
+      const published = await request(`/api/admin/content/project/${encodeURIComponent(draft.id)}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ expectedVersion: draft.version, idempotencyKey: `phase4-publish-${uniqueSuffix}` }),
+      }, sessionCookie, "https://worker.test", executionCtx);
+      expect(published.status).toBe(201);
+      const release = (await parse<{ id: string; status: string; checksum: string }>(published)).data!;
+      releaseIds.push(release.id);
+      expect(release.checksum).toMatch(/^[0-9a-f]{64}$/);
+      const initialBackground = background;
+      background = [];
+      const job = await env.DB.prepare("SELECT id FROM deployment_jobs WHERE release_id = ?")
+        .bind(release.id).first<{ id: string }>();
+      expect(job?.id).toBeTruthy();
+      await Promise.allSettled([...initialBackground, processDeploymentJob(bindings, job!.id)]);
+      const storedRelease = await env.DB.prepare("SELECT status, content_checksum FROM content_releases WHERE id = ?")
+        .bind(release.id).first<{ status: string; content_checksum: string }>();
+      const releaseFailure = await env.DB.prepare("SELECT error_code, error_message FROM content_releases WHERE id = ?")
+        .bind(release.id).first<{ error_code: string | null; error_message: string | null }>();
+      expect(storedRelease?.status, JSON.stringify(releaseFailure)).toBe("LIVE");
+      expect(storedRelease?.content_checksum).toBe(release.checksum);
+      expect(releaseId).toBe(release.id);
+      expect(releaseChecksum).toBe(release.checksum);
+      expect(projectPreviewConfigPatches).toBe(0);
+      expect(buildContextChecksCompleted).toBe(true);
+      expect(requestMarker).toBe(`portfolio-release:${release.id}:attempt:1`);
+      const liveState = await env.DB.prepare("SELECT live_release_id, active_release_id FROM release_environment_state WHERE environment = 'staging'")
+        .first<{ live_release_id: string | null; active_release_id: string | null }>();
+      expect(liveState).toEqual({ live_release_id: release.id, active_release_id: null });
+      const items = await env.DB.prepare("SELECT entity_type, entity_id, operation FROM content_release_items WHERE release_id = ? AND entity_type = 'project' AND entity_id = ?")
+        .bind(release.id, draft.id).first<{ entity_type: string; entity_id: string; operation: string }>();
+      expect(items?.operation).toBe("PUBLISH");
+      const liveDraft = await env.DB.prepare("SELECT state, base_revision FROM admin_content_drafts WHERE entity_type = 'project' AND entity_id = ?")
+        .bind(draft.id).first<{ state: string; base_revision: string }>();
+      const targetHash = await env.DB.prepare("SELECT snapshot_hash FROM content_release_items WHERE release_id = ? AND entity_type = 'project' AND entity_id = ?")
+        .bind(release.id, draft.id).first<{ snapshot_hash: string }>();
+      expect(liveDraft).toEqual({ state: "PUBLISHED", base_revision: targetHash?.snapshot_hash });
+      const publicView = await request("/api/public/projects?locale=en", {}, "");
+      expect(publicView.status).toBe(200);
+      expect(await publicView.text()).toContain("Phase Four Release Integration Test");
+      const duplicatePublish = await request(`/api/admin/content/project/${encodeURIComponent(draft.id)}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ expectedVersion: draft.version, idempotencyKey: `phase4-publish-${uniqueSuffix}` }),
+      });
+      expect(duplicatePublish.status).toBe(201);
+      expect((await parse<{ id: string }>(duplicatePublish)).data?.id).toBe(release.id);
+      expect(deploymentNumber).toBe(1);
+
+      expectedUnpublishedSlug = String(draft.snapshot.slug);
+      background = [];
+      const unpublishResponse = await request(`/api/admin/content/project/${encodeURIComponent(draft.id)}/unpublish`, {
+        method: "POST",
+        body: JSON.stringify({ idempotencyKey: `phase4-unpublish-${uniqueSuffix}` }),
+      }, sessionCookie, "https://worker.test", executionCtx);
+      expect(unpublishResponse.status).toBe(201);
+      const unpublished = (await parse<{ id: string }>(unpublishResponse)).data!;
+      releaseIds.push(unpublished.id);
+      await Promise.allSettled(background);
+      const unpublishedStatus = await env.DB.prepare("SELECT status FROM content_releases WHERE id = ?")
+        .bind(unpublished.id).first<{ status: string }>();
+      expect(unpublishedStatus?.status).toBe("LIVE");
+      const unpublishedRoute = await request(`/api/public/projects/${encodeURIComponent(draft.snapshot.slug as string)}?locale=en`, {}, "");
+      expect(unpublishedRoute.status).toBe(404);
+      const retainedDraft = await env.DB.prepare("SELECT state, base_revision FROM admin_content_drafts WHERE entity_type = 'project' AND entity_id = ?")
+        .bind(draft.id).first<{ state: string; base_revision: string | null }>();
+      expect(retainedDraft).toEqual({ state: "DRAFT", base_revision: null });
+
+      expectedUnpublishedSlug = "";
+      background = [];
+      const rollbackResponse = await request(`/api/admin/content/project/${encodeURIComponent(draft.id)}/rollback`, {
+        method: "POST",
+        body: JSON.stringify({ releaseId: release.id, idempotencyKey: `phase4-rollback-${uniqueSuffix}` }),
+      }, sessionCookie, "https://worker.test", executionCtx);
+      expect(rollbackResponse.status).toBe(201);
+      const rollback = (await parse<{ id: string }>(rollbackResponse)).data!;
+      releaseIds.push(rollback.id);
+      await Promise.allSettled(background);
+      const rollbackStatus = await env.DB.prepare("SELECT status, operation FROM content_releases WHERE id = ?")
+        .bind(rollback.id).first<{ status: string; operation: string }>();
+      expect(rollbackStatus).toEqual({ status: "LIVE", operation: "ROLLBACK" });
+      const restoredPublic = await request("/api/public/projects?locale=en", {}, "");
+      expect(restoredPublic.status).toBe(200);
+      expect(await restoredPublic.text()).toContain("Phase Four Release Integration Test");
+      const expiredBuildContext = new URL("https://worker.test/api/build/release-context");
+      expiredBuildContext.searchParams.set("branch", "feat/phase4-publish-workflow");
+      expiredBuildContext.searchParams.set("commitSha", commitSha);
+      expiredBuildContext.searchParams.set("previewUrl", `https://${previewHost}`);
+      expect((await app.request(expiredBuildContext, {
+        headers: { "x-portfolio-build-token": "phase4-build-token-test-only" },
+      }, bindings)).status).toBe(404);
+    } finally {
+      vi.unstubAllGlobals();
+      bindings.CLOUDFLARE_ACCOUNT_ID = undefined;
+      bindings.PAGES_PROJECT_NAME = undefined;
+      bindings.PAGES_STAGING_BRANCH = undefined;
+      bindings.GITHUB_REPOSITORY = undefined;
+      bindings.CLOUDFLARE_API_TOKEN = undefined;
+      bindings.PAGES_BUILD_TOKEN = "phase4-build-token-test-only";
+      await env.DB.prepare("UPDATE release_environment_state SET live_release_id = NULL, active_release_id = NULL, next_release_number = 1 WHERE environment = 'staging'").run();
+      for (const id of [...releaseIds].reverse()) {
+        const job = await env.DB.prepare("SELECT id FROM deployment_jobs WHERE release_id = ?").bind(id).first<{ id: string }>();
+        if (job) await env.DB.prepare("DELETE FROM deployment_jobs WHERE id = ?").bind(job.id).run();
+        await env.DB.prepare("DELETE FROM content_releases WHERE id = ?").bind(id).run();
+      }
+      await env.DB.prepare("DELETE FROM admin_audit_logs WHERE entity_id = ?").bind(draft.id).run();
+      await env.DB.prepare("DELETE FROM admin_content_revisions WHERE entity_type = 'project' AND entity_id = ?").bind(draft.id).run();
+      await env.DB.prepare("DELETE FROM admin_content_drafts WHERE entity_type = 'project' AND entity_id = ?").bind(draft.id).run();
+    }
+  }, 30_000);
 });

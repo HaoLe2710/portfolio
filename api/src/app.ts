@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { requestLogger } from "./middleware/request-logger";
 import {
@@ -19,8 +19,55 @@ import { parseLocale, parseSlug } from "./validators/public-query";
 import type { WorkerEnv } from "./types/env";
 import adminRoutes from "./admin/routes";
 import { AdminError } from "./admin/errors";
+import { getLiveReleasePublicResponse, getReleasePublicResponse, resolveStagingReleaseBuild } from "./admin/release-public";
+import { reconcileDeploymentJobs } from "./admin/release-service";
 
 const app = new Hono<WorkerEnv>();
+
+function constantTimeEqual(first: string, second: string) {
+  let difference = first.length ^ second.length;
+  const length = Math.max(first.length, second.length);
+  for (let index = 0; index < length; index += 1) {
+    difference |= (first.charCodeAt(index) || 0) ^ (second.charCodeAt(index) || 0);
+  }
+  return difference === 0;
+}
+
+async function publicResponse<T>(
+  context: Context<WorkerEnv>,
+  resource: Parameters<typeof getReleasePublicResponse>[3],
+  locale: "en" | "vi",
+  fallback: () => Promise<T>,
+  slug?: string
+) {
+  const releaseId = context.req.header("x-portfolio-release-id");
+  const buildToken = context.req.header("x-portfolio-build-token");
+  if (!releaseId && !buildToken) {
+    const environment = context.env.RELEASE_ENVIRONMENT;
+    if (environment === "staging" || environment === "production") {
+      const live = await getLiveReleasePublicResponse(context.env.DB, environment, resource, locale, slug);
+      if (live !== null) return successResponse(context, live);
+    }
+    return successResponse(context, await fallback());
+  }
+  if (!releaseId || !buildToken || !context.env.PAGES_BUILD_TOKEN ||
+      !constantTimeEqual(buildToken, context.env.PAGES_BUILD_TOKEN)) {
+    throw new AdminError(401, "UNAUTHORIZED", "Build release authentication failed.");
+  }
+  const environment = context.env.RELEASE_ENVIRONMENT;
+  if (environment !== "staging" && environment !== "production") {
+    throw new AdminError(503, "RELEASE_CONFIGURATION_MISSING", "Release environment is not configured.");
+  }
+  const response = await getReleasePublicResponse(
+    context.env.DB,
+    releaseId,
+    environment,
+    resource,
+    locale,
+    slug
+  );
+  return successResponse(context, response);
+}
 
 function allowedOrigins(configured: string | undefined) {
   return new Set(
@@ -57,83 +104,93 @@ app.get("/healthz", async (context) => {
   return successResponse(context, { status: "ok", database: "ok" });
 });
 
-app.get("/api/public/profile", async (context) =>
-  successResponse(
-    context,
-    await getProfile(context.env.DB, parseLocale(context.req.query("locale")))
-  )
-);
+app.get("/api/build/release-context", async (context) => {
+  const suppliedToken = context.req.header("x-portfolio-build-token") ?? "";
+  const configuredToken = context.env.PAGES_BUILD_TOKEN ?? "";
+  if (!configuredToken || !suppliedToken || !constantTimeEqual(suppliedToken, configuredToken)) {
+    throw new AdminError(401, "UNAUTHORIZED", "Build release authentication failed.");
+  }
+  if (context.env.RELEASE_ENVIRONMENT !== "staging") {
+    throw new AdminError(403, "STAGING_ONLY", "Release build resolution is available only in staging.");
+  }
 
-app.get("/api/public/skills", async (context) =>
-  successResponse(
-    context,
-    await getSkillGroups(context.env.DB, parseLocale(context.req.query("locale")))
-  )
-);
+  const branch = context.req.query("branch") ?? "";
+  const commitSha = context.req.query("commitSha")?.toLowerCase() ?? "";
+  const previewUrl = context.req.query("previewUrl") ?? "";
+  if (!branch) {
+    throw new AdminError(404, "RELEASE_BUILD_NOT_FOUND", "No staging release is assigned to this Pages deployment.");
+  }
+  if (branch !== context.env.PAGES_STAGING_BRANCH) {
+    const response = new Response(null, { status: 204, headers: { "Cache-Control": "no-store, private" } });
+    return response;
+  }
+  if (!/^[0-9a-f]{40}$/.test(commitSha) || !previewUrl) {
+    throw new AdminError(400, "INVALID_RELEASE_BUILD_IDENTITY", "The Pages deployment identity is invalid.");
+  }
 
-app.get("/api/public/achievements", async (context) =>
-  successResponse(
-    context,
-    await getAchievements(context.env.DB, parseLocale(context.req.query("locale")))
-  )
-);
+  const build = await resolveStagingReleaseBuild(context.env.DB, { branch, commitSha, previewUrl });
+  if (!build) {
+    throw new AdminError(404, "RELEASE_BUILD_NOT_FOUND", "No staging release is assigned to this Pages deployment.");
+  }
 
-app.get("/api/public/certificates", async (context) =>
-  successResponse(
-    context,
-    await getCertificates(context.env.DB, parseLocale(context.req.query("locale")))
-  )
-);
+  const response = successResponse(context, build);
+  response.headers.set("Cache-Control", "no-store, private");
+  return response;
+});
 
-app.get("/api/public/projects", async (context) =>
-  successResponse(
-    context,
-    await getProjects(context.env.DB, parseLocale(context.req.query("locale")))
-  )
-);
+app.get("/api/public/profile", async (context) => {
+  const locale = parseLocale(context.req.query("locale"));
+  return publicResponse(context, "profile", locale, () => getProfile(context.env.DB, locale));
+});
 
-app.get("/api/public/projects/:slug", async (context) =>
-  successResponse(
-    context,
-    await getProjectBySlug(
-      context.env.DB,
-      parseLocale(context.req.query("locale")),
-      parseSlug(context.req.param("slug"))
-    )
-  )
-);
+app.get("/api/public/skills", async (context) => {
+  const locale = parseLocale(context.req.query("locale"));
+  return publicResponse(context, "skills", locale, () => getSkillGroups(context.env.DB, locale));
+});
 
-app.get("/api/public/blog-posts", async (context) =>
-  successResponse(
-    context,
-    await getBlogPosts(context.env.DB, parseLocale(context.req.query("locale")))
-  )
-);
+app.get("/api/public/achievements", async (context) => {
+  const locale = parseLocale(context.req.query("locale"));
+  return publicResponse(context, "achievements", locale, () => getAchievements(context.env.DB, locale));
+});
 
-app.get("/api/public/blog-posts/:slug", async (context) =>
-  successResponse(
-    context,
-    await getBlogPostBySlug(
-      context.env.DB,
-      parseLocale(context.req.query("locale")),
-      parseSlug(context.req.param("slug"))
-    )
-  )
-);
+app.get("/api/public/certificates", async (context) => {
+  const locale = parseLocale(context.req.query("locale"));
+  return publicResponse(context, "certificates", locale, () => getCertificates(context.env.DB, locale));
+});
 
-app.get("/api/public/contact-links", async (context) =>
-  successResponse(
-    context,
-    await getContactLinks(context.env.DB, parseLocale(context.req.query("locale")))
-  )
-);
+app.get("/api/public/projects", async (context) => {
+  const locale = parseLocale(context.req.query("locale"));
+  return publicResponse(context, "projects", locale, () => getProjects(context.env.DB, locale));
+});
 
-app.get("/api/public/site-settings", async (context) =>
-  successResponse(
-    context,
-    await getSiteSettings(context.env.DB, parseLocale(context.req.query("locale")))
-  )
-);
+app.get("/api/public/projects/:slug", async (context) => {
+  const locale = parseLocale(context.req.query("locale"));
+  const slug = parseSlug(context.req.param("slug"));
+  return publicResponse(context, "project", locale,
+    () => getProjectBySlug(context.env.DB, locale, slug), slug);
+});
+
+app.get("/api/public/blog-posts", async (context) => {
+  const locale = parseLocale(context.req.query("locale"));
+  return publicResponse(context, "blogPosts", locale, () => getBlogPosts(context.env.DB, locale));
+});
+
+app.get("/api/public/blog-posts/:slug", async (context) => {
+  const locale = parseLocale(context.req.query("locale"));
+  const slug = parseSlug(context.req.param("slug"));
+  return publicResponse(context, "blogPost", locale,
+    () => getBlogPostBySlug(context.env.DB, locale, slug), slug);
+});
+
+app.get("/api/public/contact-links", async (context) => {
+  const locale = parseLocale(context.req.query("locale"));
+  return publicResponse(context, "contactLinks", locale, () => getContactLinks(context.env.DB, locale));
+});
+
+app.get("/api/public/site-settings", async (context) => {
+  const locale = parseLocale(context.req.query("locale"));
+  return publicResponse(context, "siteSettings", locale, () => getSiteSettings(context.env.DB, locale));
+});
 
 app.notFound((context) =>
   errorResponse(context, 404, "NOT_FOUND", "Resource not found.")
@@ -172,3 +229,7 @@ app.onError((error, context) => {
 });
 
 export default app;
+
+export function scheduled(_controller: ScheduledController, env: WorkerEnv["Bindings"], context: ExecutionContext) {
+  context.waitUntil(reconcileDeploymentJobs(env));
+}

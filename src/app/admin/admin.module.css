@@ -337,6 +337,42 @@
 .revisionRow small, .revisionRow time { color: #86918c; font-size: 9px; }
 .dialogFootnote { margin: 0; padding: 13px 20px; border-top: 1px solid #e9eeeb; color: #85918b; font-size: 9px; line-height: 1.6; }
 
+.releaseCenter { display: grid; gap: 17px; }
+.releaseIntro { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 19px 21px; border: 1px solid #dce6e0; border-radius: 8px; background: linear-gradient(115deg, #fbfdfc, #f0f7f3); }
+.releaseIntro h2 { margin: 5px 0 4px; color: #1b2b23; font-size: 17px; letter-spacing: -.03em; }
+.releaseIntro p { max-width: 630px; margin: 0; color: #76847d; font-size: 10px; line-height: 1.6; }
+.stagingPill { display: inline-flex; align-items: center; gap: 7px; flex: none; padding: 7px 10px; border: 1px solid #cbe2d3; border-radius: 999px; background: #f4fbf6; color: #3c7352; font-size: 9px; font-weight: 650; }
+.stagingPill > span { width: 6px; height: 6px; border-radius: 50%; background: #48a267; box-shadow: 0 0 0 3px #dff1e5; }
+.releaseList { display: grid; gap: 11px; }
+.releaseCard { min-width: 0; padding: 16px 18px; border: 1px solid #e0e8e3; border-radius: 8px; background: #fff; box-shadow: 0 3px 12px rgb(24 42 32 / .025); }
+.releaseCardTop { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.releaseCardTop h3 { margin: 4px 0 3px; color: #20332a; font-size: 14px; font-weight: 650; text-transform: capitalize; }
+.releaseCardTop small { color: #6c7a72; font-size: 10px; overflow-wrap: anywhere; }
+.releaseNumber { color: #61816d; font-size: 9px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+.releaseState { flex: none; padding: 5px 8px; border: 1px solid #e4e9e6; border-radius: 5px; background: #f7f9f8; color: #637269; font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.releaseStateLive { border-color: #cbe8d3; background: #f0faf3; color: #34804a; }
+.releaseStateFailed { border-color: #f0d5d2; background: #fff5f3; color: #aa4138; }
+.releaseProgress { display: grid; grid-template-columns: repeat(4, 1fr); margin: 14px 0; padding: 0; list-style: none; }
+.releaseProgress li { position: relative; padding-top: 12px; color: #7e8a83; font-size: 10px; text-align: center; }
+.releaseProgress li::before { position: absolute; top: 0; left: 50%; width: 6px; height: 6px; border: 1px solid #d5ded8; border-radius: 50%; background: #fff; content: ""; transform: translateX(-50%); }
+.releaseProgress li:not(:last-child)::after { position: absolute; top: 2px; left: calc(50% + 5px); width: calc(100% - 10px); height: 1px; background: #e5ebe7; content: ""; }
+.releaseProgress .releaseStepDone { color: #3e7350; }
+.releaseProgress .releaseStepDone::before { border-color: #65a879; background: #65a879; }
+.releaseProgress .releaseStepDone:not(:last-child)::after { background: #9fc9aa; }
+.releaseFacts { display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 10px; margin: 0 0 9px; }
+.releaseFacts div { min-width: 0; }
+.releaseFacts dt { margin-bottom: 3px; color: #76847c; font-size: 10px; }
+.releaseFacts dd { margin: 0; color: #4f6057; font-size: 11px; overflow-wrap: anywhere; }
+.releaseChecksum { display: block; overflow: hidden; color: #69786f; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.previewLink { display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; color: #31754a; font-size: 11px; font-weight: 650; text-decoration: none; }
+.previewLink:hover { text-decoration: underline; }
+.releaseError { padding: 9px 10px; border: 1px solid #f2d8d4; border-radius: 5px; background: #fff7f6; color: #9d453d; font-size: 11px; line-height: 1.5; }
+.releaseActions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.publishButton { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid #287449; border-radius: 5px; background: #317f50; color: white; font-size: 10px; font-weight: 650; transition: background .15s ease; }
+.publishButton:hover:not(:disabled) { background: #286a42; }
+.publishButton:disabled { cursor: not-allowed; opacity: .55; }
+.publishButton .material-symbols-outlined { font-size: 15px; }
+
 .loginPage { display: grid; min-height: 100vh; place-items: center; padding: 26px; background: radial-gradient(ellipse at 15% 8%, #e8f5ee 0%, transparent 38%), #f3f6f4; color: #17251f; font-family: var(--font-geist-sans), Arial, sans-serif; }
 .loginCard { width: min(420px, 100%); padding: 34px; border: 1px solid #dce6e0; border-radius: 11px; background: rgb(255 255 255 / .95); box-shadow: 0 20px 65px rgb(22 45 34 / .08); }
 .loginCard .brandMark { margin-bottom: 27px; }
@@ -427,6 +463,9 @@
   .contentPreview { padding: 20px 15px; }
   .revisionRow { grid-template-columns: 28px minmax(0,1fr); }
   .revisionRow .quietButton { grid-column: 2; justify-self: start; }
+  .releaseIntro { align-items: flex-start; flex-direction: column; }
+  .releaseFacts { grid-template-columns: 1fr; gap: 7px; }
+.releaseProgress li { font-size: 9px; }
   .loginCard { padding: 27px 22px; }
 }
 

@@ -92,13 +92,13 @@ Worker local chạy tại `http://127.0.0.1:8787`; API base URL là `http://127.
 
 Production Pages build bằng API sau khi D1 remote đã migrate/seed, Worker production đã kiểm thử, API-mode static build và data parity pass, và Pages preview xác nhận SEO/routes. Nếu build API thất bại, build sẽ dừng và giữ deployment production đang hoạt động cho tới khi phát hành mới.
 
-## CMS admin (Phase 3, draft-only)
+## CMS admin and staging releases (Phase 3–4)
 
 CMS chạy tại `/admin` trên cùng Pages origin. Giao diện vẫn được xuất tĩnh; `functions/api/admin/[[path]].ts` chuyển tiếp riêng `/api/admin/*` qua Pages Service Binding. Preview dùng Worker `web-portfolio-api-staging`; production chỉ dùng Worker `web-portfolio-api` sau khi triển khai Phase 3 được chấp thuận. Không cần CORS hoặc third-party cookie. Trang admin có `noindex`, `X-Robots-Tag`, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: same-origin` và không được cache. API response admin đặt `Cache-Control: no-store, private`.
 
 Đăng nhập chỉ dành cho owner/admin đã được bootstrap. Không có đăng ký công khai. Mật khẩu mới dùng Argon2id v1.3 (salt ngẫu nhiên 16 byte, hash 32 byte, 19.456 KiB bộ nhớ, 2 lượt, 1 lane) qua WASM trên Worker. Tài khoản PBKDF2-SHA-256 cũ (100.000 vòng) vẫn đăng nhập được và được nâng cấp sang Argon2id sau lần đăng nhập hợp lệ. Session random chỉ lưu hash trong D1 và dùng cookie `HttpOnly`, `SameSite=Lax`, `Secure` trên HTTPS. POST/PUT/PATCH/DELETE và đăng nhập phải có `Origin` cùng origin. Đăng nhập bị giới hạn 5 lần mỗi 15 phút theo IP. Đổi mật khẩu thu hồi mọi session.
 
-CMS đọc snapshot từ các bảng published hiện có, nhưng thao tác Save/Discard/Restore chỉ ghi các bảng `admin_*` của migration `0002_admin_cms.sql`. Mỗi lần lưu tạo revision và audit entry; cập nhật có kiểm tra version để phát hiện thay đổi đồng thời. Không có publish route, deploy hook hay ghi vào các bảng public. Preview chỉ hiện trong phiên CMS đã đăng nhập. R2, media upload, publish workflow và Worker API cho public write nằm ngoài Phase 3.
+CMS đọc snapshot từ các bảng published hiện có; thao tác Save/Discard/Restore ghi các bảng `admin_*` và lưu revision/audit, có kiểm tra version để phát hiện cập nhật đồng thời. Phase 4 bổ sung immutable release snapshots, Owner-only publish/unpublish, kiểm tra deployment, retry có giới hạn và content rollback bằng release mới. Public content chỉ chuyển sang release live sau khi Pages Preview build và smoke verification thành công. Workflow hiện bị khóa ở staging; Pages production, Worker production và D1 production không được cập nhật bởi các thao tác CMS này. Không triển khai R2, media upload hay public write API.
 
 ### Chạy CMS local
 
@@ -128,8 +128,22 @@ pnpm admin:bootstrap:staging
 pnpm api:deploy:staging
 ```
 
-Bootstrap staging cũng yêu cầu terminal tương tác và email/mật khẩu do operator chọn. Wrangler Pages phải đọc `wrangler.toml` để áp dụng service binding: preview → `web-portfolio-api-staging`, production → `web-portfolio-api`. Trong Dashboard xác minh Workers & Pages → `web-porfolio` → Settings → Functions → Service bindings; cấu hình Git integration hiện tại tiếp tục dùng branch previews. Chỉ chuyển Worker production sau backup, migration review, staging E2E và security acceptance.
+Bootstrap staging cũng yêu cầu terminal tương tác và email/mật khẩu do operator chọn. Wrangler Pages phải đọc `wrangler.toml` để áp dụng service binding: preview → `web-portfolio-api-staging`, production → `web-portfolio-api`. Trong Dashboard xác minh Workers & Pages → `web-porfolio` → Settings → Functions → Service bindings và bật Preview deployments cho branch staging.
 
-Migration `0002_admin_cms.sql` và `0003_argon2id_auth.sql` additive; không sửa `0001_init_schema.sql`. `0003` giữ tương thích tài khoản PBKDF2 cũ. Nếu CMS cần rollback, gỡ route/Pages Function bằng commit revert rồi triển khai phiên bản Worker trước đó; giữ các bảng `admin_*` cho đến khi backup và phê duyệt riêng việc xóa. Không áp dụng rollback SQL phá hủy trên production.
+Phase 4 staging release cần cấu hình Worker staging (không đặt các giá trị này trong repo):
+
+```bash
+pnpm exec wrangler secret put CLOUDFLARE_API_TOKEN --config api/wrangler.staging.toml
+pnpm exec wrangler secret put PAGES_BUILD_TOKEN --config api/wrangler.staging.toml
+pnpm api:deploy:staging
+```
+
+`CLOUDFLARE_API_TOKEN` phải là token hẹp quyền cho Pages project `web-porfolio`; `PAGES_BUILD_TOKEN` là secret ngẫu nhiên riêng dùng để xác thực Pages build với staging Worker. Worker vars cố định trong `api/wrangler.staging.toml` giới hạn project, GitHub repo và branch. Trong Cloudflare Pages, cấu hình cùng secret đó thành `PORTFOLIO_BUILD_TOKEN` cho Preview build environment. Build tra release ID/checksum theo đúng branch, commit và hostname của từng Preview deployment; không ghi release-specific values vào cấu hình project dùng chung. Xóa `PORTFOLIO_RELEASE_ID` và `PORTFOLIO_RELEASE_CHECKSUM` cũ nếu đang tồn tại ở Preview. Không dùng Wrangler OAuth credential làm runtime token, không paste secret vào chat, shell history hoặc source. Nếu staging Worker secrets chưa được cấu hình, CMS draft vẫn có thể dùng nhưng publish sẽ fail-closed.
+
+Publish đóng băng toàn bộ content thành release snapshot/checksum, tạo Pages Preview từ commit Git branch staging, rồi kiểm tra release manifest, route/locales, metadata, assets, nội dung, sitemap/robots và Pages Admin Function. Build lấy release context từ Worker bằng token ổn định và khóa theo branch, commit, deployment hostname; các build đồng thời hoặc branch khác không thể đọc nhầm release qua biến môi trường project dùng chung. Scheduled reconciliation chạy mỗi phút để đồng bộ trạng thái job. Retry chỉ dành cho failure đã xác định và tối đa ba attempt; timeout/ambiguous request phải reconcile trước để tránh tạo deployment trùng. Unpublish cũng là release mới; rollback content tạo release mới từ snapshot lịch sử. Endpoint Pages deployment rollback bị chặn vì Cloudflare rollback API nhắm production. CMS UI hiển thị release history và trạng thái deploy.
+
+Kiểm tra tại Preview thực tế bằng `pnpm test:admin:preview` theo biến môi trường hướng dẫn bên dưới. Unit/integration fake provider không thay thế Pages Preview E2E. Chỉ xem staging release là đã nghiệm thu sau khi một Preview deployment thực tế qua xác minh; production chưa nằm trong Phase 4.
+
+Migrations `0002_admin_cms.sql`, `0003_argon2id_auth.sql`, và `0004_content_release_workflow.sql` là additive/giữ dữ liệu; không sửa `0001_init_schema.sql`. `0003` giữ tương thích tài khoản PBKDF2 cũ. Nếu cần dừng workflow, revert code rồi redeploy riêng staging Worker/Pages; giữ `admin_*` và release history cho đến khi backup và phê duyệt riêng việc xóa. Không áp dụng rollback SQL phá hủy hoặc release workflow lên production.
 
 Tài liệu: [Next.js Static Exports](https://nextjs.org/docs/app/guides/static-exports), [Cloudflare Pages static Next.js deployment](https://developers.cloudflare.com/pages/framework-guides/nextjs/deploy-a-static-nextjs-site/), [Pages redirects](https://developers.cloudflare.com/pages/configuration/redirects/) và [Wrangler Pages configuration](https://developers.cloudflare.com/pages/functions/wrangler-configuration/).

@@ -1,1 +1,1 @@
-export { default } from "./app";
+export { default, scheduled } from "./app";

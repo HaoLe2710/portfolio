@@ -3,11 +3,19 @@ main = "src/index.ts"
 compatibility_date = "2026-10-23"
 workers_dev = true
 
+[triggers]
+crons = ["*/1 * * * *"]
+
 [observability]
 enabled = true
 
 [vars]
 CORS_ALLOWED_ORIGINS = "http://localhost:3000"
+RELEASE_ENVIRONMENT = "staging"
+CLOUDFLARE_ACCOUNT_ID = "bae567c126b6d043659b4c28bd772269"
+PAGES_PROJECT_NAME = "web-porfolio"
+PAGES_STAGING_BRANCH = "feat/phase4-publish-workflow"
+GITHUB_REPOSITORY = "HaoLe2710/portfolio"
 
 [[d1_databases]]
 binding = "DB"
